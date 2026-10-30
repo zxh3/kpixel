@@ -7,6 +7,7 @@
 - **Framework** — TanStack Start + TanStack Router (file-based routes in `src/routes`)
 - **Runtime** — Cloudflare Workers via `@cloudflare/vite-plugin` (dev runs in `workerd`)
 - **UI** — Tailwind CSS v4, shadcn/ui (Base UI, `base-nova` style), lucide icons
+- **AI agent** — [Pi](https://developers.cloudflare.com/agents/harnesses/pi/) on Durable Objects, models via AI Gateway (planned; see [docs/ai-agent-harness.md](docs/ai-agent-harness.md))
 - **Tooling** — Vite 8, TypeScript 7, [oxlint](https://oxc.rs/docs/guide/usage/linter) (type-aware), [oxfmt](https://oxc.rs/docs/guide/usage/formatter)
 
 ## Getting started
