@@ -49,6 +49,13 @@ wrangler.jsonc     Worker config (bindings, vars, compatibility)
 
 Generated files — `src/routeTree.gen.ts` and `worker-configuration.d.ts` — are committed and must not be edited by hand.
 
+## Docs
+
+- [Roadmap](docs/roadmap.md) — the living plan, phase by phase
+- [Product research](docs/product-research.md) — market, users and the product design behind the plan
+- [AI agent harness](docs/ai-agent-harness.md) — how the agent runs on Pi and Durable Objects
+- [Changelog](docs/changelog/) — milestones and decisions over time
+
 ## Cloudflare
 
 Bindings (KV, D1, R2, Durable Objects, Queues, …) are declared in `wrangler.jsonc`. After changing it, run `pnpm cf-typegen`. Access bindings in server-only code via:

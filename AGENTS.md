@@ -22,7 +22,9 @@ TanStack Start app on Cloudflare Workers. See README.md for the stack and layout
 - Never edit `src/routeTree.gen.ts` or `worker-configuration.d.ts` by hand.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `type(scope): summary`, e.g. `feat(auth): add login page`.
 
-## Changelog
+## Roadmap and changelog
+
+[docs/roadmap.md](docs/roadmap.md) is the living plan. When work completes a roadmap milestone or changes the plan, update the roadmap in the same commit, following its "Updating this roadmap" section.
 
 `docs/changelog/` records milestones and decisions; see its [README](docs/changelog/README.md) for the file naming and template.
 
