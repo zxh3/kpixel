@@ -44,9 +44,11 @@ src/
   components/ui/   shadcn/ui components (add with `pnpm dlx shadcn@latest add <name>`)
   document/        document model, operations and transactions (pure TypeScript)
   lib/             shared utilities
-  routes/          file-based routes (`__root.tsx` is the HTML shell)
+  rooms/           DocumentRoom Durable Object: a document's op log and state (SQLite + R2)
+  routes/          file-based routes (`__root.tsx` is the HTML shell); `api/` holds JSON endpoints
   storage/         browser storage (IndexedDB blob cache)
   router.tsx       router factory
+  server.ts        Worker entry: TanStack Start's handler plus Durable Object exports
   styles.css       Tailwind entry + shadcn theme tokens
 docs/schemas/      published JSON Schema for .kpixel files (generated; `pnpm test -u` updates it)
 wrangler.jsonc     Worker config (bindings, vars, compatibility)
@@ -60,6 +62,7 @@ Generated files — `src/routeTree.gen.ts` and `worker-configuration.d.ts` — a
 - [Product research](docs/product-research.md) — market, users and the product design behind the plan
 - [AI agent harness](docs/ai-agent-harness.md) — how the agent runs on Pi and Durable Objects
 - [Document model](docs/design/document-model.md) — the document, operations and transactions everything builds on
+- [Document rooms](docs/design/document-rooms.md) — how documents are stored and served on Cloudflare
 - [Changelog](docs/changelog/) — milestones and decisions over time
 
 ## Cloudflare

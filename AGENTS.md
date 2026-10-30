@@ -25,6 +25,14 @@ Verify every change that affects the UI in a real browser before calling it done
 - Changing the stored document shape means bumping `DOCUMENT_SCHEMA_VERSION`, adding a migration in `migrations.ts`, and regenerating `docs/schemas/` with `pnpm test -u`. Never edit a shipped migration.
 - `.aseprite` support is clean-room: work only from Aseprite's published file spec and from files Aseprite produces. Never read, copy or port Aseprite's source code; its EULA forbids reuse.
 
+## Document rooms
+
+Each document's authoritative copy is a `DocumentRoom` Durable Object in `src/rooms/`; read [docs/design/document-rooms.md](docs/design/document-rooms.md) before changing it.
+
+- Put room logic in `DocumentStore`, which depends only on `SqlDatabase` and `BlobStore`, so it stays testable in Node. Keep `DocumentRoom` a thin wrapper.
+- Durable Object methods take and return the JSON wire format, return expected failures as results (RPC doesn't keep error types), and pass large payloads as JSON text.
+- Reach rooms through `src/rooms/document-rooms.ts`, from server routes or server functions only.
+
 ## Conventions
 
 - Package manager is pnpm. Do not use npm or yarn.

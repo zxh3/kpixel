@@ -10,33 +10,78 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiDocumentsIndexRouteImport } from './routes/api/documents/index'
+import { Route as ApiDocumentsDocumentIdIndexRouteImport } from './routes/api/documents/$documentId/index'
+import { Route as ApiDocumentsDocumentIdTransactionsRouteImport } from './routes/api/documents/$documentId/transactions'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDocumentsIndexRoute = ApiDocumentsIndexRouteImport.update({
+  id: '/api/documents/',
+  path: '/api/documents/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDocumentsDocumentIdIndexRoute =
+  ApiDocumentsDocumentIdIndexRouteImport.update({
+    id: '/api/documents/$documentId/',
+    path: '/api/documents/$documentId/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiDocumentsDocumentIdTransactionsRoute =
+  ApiDocumentsDocumentIdTransactionsRouteImport.update({
+    id: '/api/documents/$documentId/transactions',
+    path: '/api/documents/$documentId/transactions',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/documents/': typeof ApiDocumentsIndexRoute
+  '/api/documents/$documentId/transactions': typeof ApiDocumentsDocumentIdTransactionsRoute
+  '/api/documents/$documentId/': typeof ApiDocumentsDocumentIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/documents': typeof ApiDocumentsIndexRoute
+  '/api/documents/$documentId/transactions': typeof ApiDocumentsDocumentIdTransactionsRoute
+  '/api/documents/$documentId': typeof ApiDocumentsDocumentIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/documents/': typeof ApiDocumentsIndexRoute
+  '/api/documents/$documentId/transactions': typeof ApiDocumentsDocumentIdTransactionsRoute
+  '/api/documents/$documentId/': typeof ApiDocumentsDocumentIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/api/documents/'
+    | '/api/documents/$documentId/transactions'
+    | '/api/documents/$documentId/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/api/documents'
+    | '/api/documents/$documentId/transactions'
+    | '/api/documents/$documentId'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/documents/'
+    | '/api/documents/$documentId/transactions'
+    | '/api/documents/$documentId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiDocumentsIndexRoute: typeof ApiDocumentsIndexRoute
+  ApiDocumentsDocumentIdTransactionsRoute: typeof ApiDocumentsDocumentIdTransactionsRoute
+  ApiDocumentsDocumentIdIndexRoute: typeof ApiDocumentsDocumentIdIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +93,36 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/documents/': {
+      id: '/api/documents/'
+      path: '/api/documents'
+      fullPath: '/api/documents/'
+      preLoaderRoute: typeof ApiDocumentsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/documents/$documentId/': {
+      id: '/api/documents/$documentId/'
+      path: '/api/documents/$documentId'
+      fullPath: '/api/documents/$documentId/'
+      preLoaderRoute: typeof ApiDocumentsDocumentIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/documents/$documentId/transactions': {
+      id: '/api/documents/$documentId/transactions'
+      path: '/api/documents/$documentId/transactions'
+      fullPath: '/api/documents/$documentId/transactions'
+      preLoaderRoute: typeof ApiDocumentsDocumentIdTransactionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiDocumentsIndexRoute: ApiDocumentsIndexRoute,
+  ApiDocumentsDocumentIdTransactionsRoute:
+    ApiDocumentsDocumentIdTransactionsRoute,
+  ApiDocumentsDocumentIdIndexRoute: ApiDocumentsDocumentIdIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

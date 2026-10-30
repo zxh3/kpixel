@@ -3,11 +3,22 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "kpixel",
-  "main": "@tanstack/react-start/server-entry",
+  // Custom entry: TanStack Start's handler plus the Durable Object classes.
+  "main": "src/server.ts",
   "compatibility_date": "2026-10-23",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true,
   },
   "upload_source_maps": true,
+  "durable_objects": {
+    // One DocumentRoom per document: its op log and current state, in SQLite.
+    "bindings": [{ "name": "DOCUMENT_ROOM", "class_name": "DocumentRoom" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DocumentRoom"] }],
+  "r2_buckets": [
+    // Content-addressed pixel blobs. Create the bucket before the first deploy:
+    // `pnpm wrangler r2 bucket create kpixel-blobs`.
+    { "binding": "BLOBS", "bucket_name": "kpixel-blobs" },
+  ],
 }

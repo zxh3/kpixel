@@ -44,7 +44,7 @@ The Pi packages are optional peer dependencies of `agents`, which supports one P
 }
 ```
 
-The Durable Object classes must be exported from the Worker entry, so this step also adds a custom server entry (`src/server.ts`) in place of `@tanstack/react-start/server-entry`, as described in the [Cloudflare TanStack Start guide](https://developers.cloudflare.com/workers/framework-guides/web-apps/tanstack-start/). Run `pnpm cf-typegen` afterwards.
+Durable Object classes are exported from the custom Worker entry, `src/server.ts`, which already exists for `DocumentRoom`; add the agent class there. Run `pnpm cf-typegen` afterwards.
 
 Shape of the agent object, following Cloudflare's example:
 

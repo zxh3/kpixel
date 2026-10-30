@@ -42,7 +42,7 @@ TanStack Start on Cloudflare Workers, Tailwind and shadcn/ui, oxlint and oxfmt, 
 - [x] **Conformance corpus.** Files made by Aseprite that must open, save and reopen losslessly, checked against Aseprite itself; fuzzing for the codec.
 - [x] **PNG import and export.** Open any PNG (indexed ones keep their palette), export frames as PNG, and a frame compositor with all 19 blend modes.
 - [x] **Provenance fields.** Origin on every cel image and actor on every transaction, even before any AI exists.
-- [ ] **Server skeleton.** Custom server entry, a single-user `DocumentRoom` Durable Object that stores a versioned op log, R2 for blobs, and save and load through it.
+- [x] **Server skeleton.** Custom server entry, a single-user `DocumentRoom` Durable Object that stores a versioned op log, R2 for blobs, and save and load through a JSON API. See [document rooms](design/document-rooms.md).
 
 **Must make solid:** stable IDs, op versioning and migrations, property-based tests for invariants and undo.
 
@@ -61,7 +61,7 @@ TanStack Start on Cloudflare Workers, Tailwind and shadcn/ui, oxlint and oxfmt, 
 - [ ] **Palettes.** Palette panel, indexed mode, Lospec and `.gpl`/`.hex` import.
 - [ ] **Export.** PNG sheet plus Aseprite-style JSON (hash and array), GIF.
 - [ ] **Keyboard-first.** Aseprite-like shortcuts.
-- [ ] **Projects and accounts (minimal).** Sign-in, a project list, cloud save through `DocumentRoom`.
+- [ ] **Projects and accounts (minimal).** Sign-in, a project list, cloud save through `DocumentRoom`. Required before any public deploy: the document API has no authentication yet.
 
 **Must make solid:** rendering performance and input latency, undo granularity that feels right (one gesture, one step).
 
