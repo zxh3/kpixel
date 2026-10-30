@@ -1,4 +1,4 @@
-# ksprite
+# kpixel
 
 [TanStack Start](https://tanstack.com/start) app deployed to [Cloudflare Workers](https://developers.cloudflare.com/workers/framework-guides/web-apps/tanstack-start/).
 
