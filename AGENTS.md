@@ -12,6 +12,7 @@ TanStack Start app on Cloudflare Workers. See README.md for the stack and layout
 ## Conventions
 
 - Package manager is pnpm. Do not use npm or yarn.
+- Give everything (variables, functions, files, directories) a clear, descriptive name that follows the established convention for its kind. Avoid cryptic abbreviations and unusual naming.
 - Import from `src` with the `@/` alias (e.g. `@/components/ui/button`).
 - Use oxfmt and oxlint only; there is no Prettier or ESLint.
 - Use shadcn components for generic UI. Add them with `pnpm dlx shadcn@latest add <component>` rather than writing them by hand.
@@ -20,3 +21,33 @@ TanStack Start app on Cloudflare Workers. See README.md for the stack and layout
 - Cloudflare bindings are server-only: read them via `import { env } from "cloudflare:workers"` inside server functions (`createServerFn`) or server routes. Route loaders and components are isomorphic, so call a server function from them instead of importing `env` directly.
 - Never edit `src/routeTree.gen.ts` or `worker-configuration.d.ts` by hand.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `type(scope): summary`, e.g. `feat(auth): add login page`.
+
+## React
+
+Follow [You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect). Use `useEffect` only to synchronize with an external system (browser APIs, non-React widgets, subscriptions). If no external system is involved, you don't need an Effect.
+
+- Derive values during render instead of copying props or state into new state. Reach for `useMemo` only when a pure calculation is measurably slow.
+- Put logic caused by a user action in that event handler, not in an Effect that watches state. Compute all the next state in the handler rather than chaining Effects.
+- Reset a component's state on a prop change by giving it a `key`. Store IDs rather than copies of objects, and derive the object during render.
+- Update the parent in the same handler that updates the child, or lift the state up. Never sync parent and child through Effects.
+- Load data in route loaders that call server functions, then pass it down. If a component must fetch in an Effect, ignore stale responses in its cleanup.
+- Subscribe to external sources with `useSyncExternalStore` or a zustand store, not with `useEffect` plus `useState`.
+- Components must survive Strict Mode double-mounting. Run one-time app initialization at module level, not in a mount Effect.
+
+## State management
+
+Keep each piece of state in the narrowest place that works:
+
+1. Server data: route loaders and server functions. Do not copy it into a store.
+2. Shareable UI state (filters, tabs, pagination): URL search params via `validateSearch`.
+3. State used by one component or a small subtree: `useState` or `useReducer`, lifted only as far as needed.
+4. Client state shared across distant components: a zustand store.
+
+Zustand rules:
+
+- Put each store in `src/stores/<name>-store.ts` and export a `use<Name>Store` hook, one store per domain.
+- Type stores with `create<State>()(...)`. Keep actions in the store beside the state, update immutably with `set`, and read current state inside actions with `get`.
+- Keep only minimal state in the store. Compute derived values in selectors.
+- Always pass a selector and pick the smallest value, e.g. `useCartStore((s) => s.count)`. Wrap selectors that return a new object or array in `useShallow`.
+- Never write to a module-level store on the server (in loaders, server functions, or during render). The Worker shares it across requests, so writes leak between users, and SSR only ever sees its initial state. For state seeded from server data, create a store per request with `createStore` from `zustand/vanilla` and provide it through React context with `useState(() => createXStore(init))`.
+- With `persist`, set `skipHydration: true` and call `persist.rehydrate()` once in the root after mount, so the server and client render the same first frame.
