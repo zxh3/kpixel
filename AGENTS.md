@@ -18,3 +18,4 @@ TanStack Start app on Cloudflare Workers. See README.md for the stack and layout
 - Use Tailwind theme tokens (`bg-background`, `text-muted-foreground`, …) instead of raw colors.
 - Cloudflare bindings are server-only: read them via `import { env } from "cloudflare:workers"` inside server functions (`createServerFn`) or server routes. Route loaders and components are isomorphic, so call a server function from them instead of importing `env` directly.
 - Never edit `src/routeTree.gen.ts` or `worker-configuration.d.ts` by hand.
+- Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `type(scope): summary`, e.g. `feat(auth): add login page`.
