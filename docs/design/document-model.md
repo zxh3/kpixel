@@ -1,6 +1,6 @@
 # Document model
 
-**Status:** implemented in [`src/document/`](../../src/document/) (Phase 0, first slice). Tilesets, grayscale and per-frame palettes are still to come; see [Not yet modelled](#not-yet-modelled).
+**Status:** implemented in [`src/document/`](../../src/document/) (Phase 0). Tilesets, grayscale and per-frame palettes are still to come; see [Not yet modelled](#not-yet-modelled).
 
 The document model is the foundation every other feature builds on: the editor, `.aseprite` I/O, sync, AI jobs and agents. It is pure TypeScript with no React or browser dependencies, so the same code runs in the editor, in Workers and Durable Objects, and in tests. The design follows [product research](../product-research.md#foundation-get-the-document-commands-and-pipeline-right-before-any-model-call).
 
@@ -31,9 +31,21 @@ Operations have strict preconditions instead of cascading side effects. For exam
 
 Operations are normalized on entry: undefined-valued properties are dropped, so documents and logs never hold keys that JSON would silently lose. In "set…" operations an omitted property is left alone and `null` removes an optional one.
 
+`patchCelPixels` replaces a rectangle inside a cel's image, so a brush stroke costs undo memory and sync traffic in proportion to the pixels it touched; `setCelData` replaces or resizes a whole image.
+
 A **transaction** (`transaction.ts`) is one logical edit: a labelled batch of operations with an actor (`user`, `agent`, `job` or `system`) and the document version it was built against. It applies all or nothing, and the result is checked against every document rule before it is accepted.
 
 A **`DocumentSession`** (`session.ts`) holds one open document with its version, an append-only transaction log, and undo and redo stacks. Undo and redo are themselves transactions, so the log can be replayed or synced. The session implements `subscribe` and `getSnapshot` for React's `useSyncExternalStore`.
+
+## Storage and files
+
+Pixels are stored as **content-addressed blobs**: a blob's key is the SHA-256 of its bytes (`blobs.ts`). Identical images are stored once, blobs never change once written, and any copy can be verified against its key.
+
+The **stored form** of a document (`stored-document.ts`) is the wire JSON with each image's pixels replaced by a `blob` hash. `saveToBlobStore` and `loadFromBlobStore` move documents in and out of any `BlobStore`: `MemoryBlobStore` for tests, `IndexedDbBlobStore` (`src/storage/`) as the browser's local cache, and an R2-backed store to come with the server.
+
+The native **`.kpixel` file** (`native-file.ts`) is a zip holding `manifest.json` (format metadata and the stored document) and `blobs/<sha256>`. Saving is deterministic: the same document always produces the same bytes. Opening caps the unzipped size, verifies every blob against its hash, and migrates the document before validating it. The manifest's JSON Schema is published at [`docs/schemas/kpixel-file-v1.schema.json`](../schemas/kpixel-file-v1.schema.json); a test fails if it drifts from the code, and `pnpm test -u` regenerates it.
+
+**Migrations** (`migrations.ts`) keep old files opening. Each change to the stored shape bumps `DOCUMENT_SCHEMA_VERSION` and adds a migration from the previous version that works on plain JSON, before validation. Shipped migrations never change.
 
 ## Invariants
 
@@ -53,7 +65,8 @@ Each cel data records where its pixels came from: `human`, `algorithmic`, `gener
 ## Testing
 
 - **Property-based tests** (`document.property.test.ts`) generate long random sequences of transactions, many of them deliberately invalid, and check that every accepted transaction leaves a valid document, that rejected ones change nothing, that undo restores each previous document exactly and redo replays it, and that the JSON transaction log replays to the same document.
-- **Unit tests** cover each operation's preconditions and inverses, the session, and the wire format.
+- **File properties** (`native-file.test.ts`) check that randomly edited documents round-trip exactly through `.kpixel` files and blob stores, and unit tests cover damaged, foreign and newer files.
+- **Unit tests** cover each operation's preconditions and inverses, the session, the wire format and migrations.
 
 `pnpm test` runs 100 random cases per property. To soak them, run `FAST_CHECK_NUM_RUNS=2000 pnpm test --testTimeout=0`.
 
@@ -64,6 +77,6 @@ These are needed for lossless `.aseprite` round-trips and are tracked in the [ro
 - tilesets and tilemap layers;
 - grayscale colour mode;
 - per-frame palettes (the model has one palette per document);
-- a schema version stored with persisted transaction logs, so logs can be migrated alongside documents.
+- a schema version stored with persisted transaction logs, so logs can be migrated alongside documents (with the server's op log).
 
-Pixel edits currently replace a cel's whole image. Region patches can be added with the blob store, when undo memory starts to matter.
+Blobs are whole images. Splitting large images into tiles, so an edit rewrites only the tiles it touches, can come later if canvases grow large enough to need it.

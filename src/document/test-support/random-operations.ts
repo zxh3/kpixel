@@ -214,6 +214,29 @@ const operationBuilders: [weight: number, build: OperationBuilder][] = [
     }),
   ],
   [
+    4,
+    (generate, document) => {
+      const celDataId = existingOrNewId(generate, Object.keys(document.celData));
+      const image = document.celData[celDataId]?.image ?? drawImage(generate, document);
+      // Usually a rectangle inside the image; sometimes one that overflows it.
+      const x = generate(fc.integer, { min: 0, max: image.width });
+      const y = generate(fc.integer, { min: 0, max: image.height });
+      const width = generate(fc.integer, { min: 1, max: Math.max(1, image.width - x + 1) });
+      const height = generate(fc.integer, { min: 1, max: Math.max(1, image.height - y + 1) });
+      const length = pixelByteLength(image.format, width, height);
+      return {
+        type: "patchCelPixels",
+        celDataId,
+        x,
+        y,
+        width,
+        height,
+        pixels: generate(fc.uint8Array, { minLength: length, maxLength: length }),
+        provenance: maybe(generate, () => ({ origin: "human" as const })),
+      };
+    },
+  ],
+  [
     2,
     (generate, document) => ({
       type: "addTag",

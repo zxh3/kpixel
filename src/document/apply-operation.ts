@@ -3,7 +3,7 @@ import type { Operation, OperationOfType, OperationType } from "./operations";
 import type { GroupLayer, Layer, PixelImage, SpriteDocument } from "./schema";
 
 import { OperationError } from "./errors";
-import { pixelByteLength, pixelFormatForColorMode } from "./pixels";
+import { bytesPerPixel, pixelByteLength, pixelFormatForColorMode } from "./pixels";
 
 export interface OperationResult {
   document: SpriteDocument;
@@ -56,6 +56,8 @@ function applyCanonicalOperation(document: SpriteDocument, operation: Operation)
       return setCelZIndex(document, operation);
     case "setCelData":
       return setCelData(document, operation);
+    case "patchCelPixels":
+      return patchCelPixels(document, operation);
     case "addTag":
       return addTag(document, operation);
     case "removeTag":
@@ -407,6 +409,42 @@ function setCelData(
   };
 }
 
+function patchCelPixels(
+  document: SpriteDocument,
+  operation: OperationOfType<"patchCelPixels">,
+): OperationResult {
+  const celData = document.celData[operation.celDataId];
+  if (!celData) {
+    fail(operation, `cel data ${operation.celDataId} doesn't exist`);
+  }
+  const { image } = celData;
+  const { x, y, width, height, pixels, provenance } = operation;
+  if (x + width > image.width || y + height > image.height) {
+    fail(operation, `rectangle doesn't fit inside the ${image.width}×${image.height} image`);
+  }
+  const expectedLength = pixelByteLength(image.format, width, height);
+  if (pixels.length !== expectedLength) {
+    fail(operation, `patch has ${pixels.length} bytes, expected ${expectedLength}`);
+  }
+
+  const rect = { x, y, width, height };
+  const previousPixels = copyRegion(image, rect);
+  const nextImage = { ...image, pixels: withRegion(image, rect, pixels) };
+  const next = withChanges(celData, { image: nextImage, provenance });
+  return {
+    document: { ...document, celData: { ...document.celData, [celData.id]: next } },
+    inverse: [
+      {
+        type: "patchCelPixels",
+        celDataId: celData.id,
+        ...rect,
+        pixels: previousPixels,
+        provenance: previousValue(provenance, celData.provenance),
+      },
+    ],
+  };
+}
+
 // Tags
 
 function addTag(document: SpriteDocument, operation: OperationOfType<"addTag">): OperationResult {
@@ -673,6 +711,39 @@ function findCel(document: SpriteDocument, layerId: LayerId, frameId: FrameId) {
   return Object.values(document.cels).find(
     (cel) => cel.layerId === layerId && cel.frameId === frameId,
   );
+}
+
+// Pixel region helpers
+
+interface PixelRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Copies a rectangle out of an image into a new row-major buffer. */
+function copyRegion(image: PixelImage, rect: PixelRect): Uint8Array {
+  const bytes = bytesPerPixel[image.format];
+  const rowLength = rect.width * bytes;
+  const region = new Uint8Array(rowLength * rect.height);
+  for (let row = 0; row < rect.height; row++) {
+    const start = ((rect.y + row) * image.width + rect.x) * bytes;
+    region.set(image.pixels.subarray(start, start + rowLength), row * rowLength);
+  }
+  return region;
+}
+
+/** Returns a copy of an image's pixels with a rectangle replaced. */
+function withRegion(image: PixelImage, rect: PixelRect, region: Uint8Array): Uint8Array {
+  const bytes = bytesPerPixel[image.format];
+  const rowLength = rect.width * bytes;
+  const pixels = image.pixels.slice();
+  for (let row = 0; row < rect.height; row++) {
+    const start = ((rect.y + row) * image.width + rect.x) * bytes;
+    pixels.set(region.subarray(row * rowLength, (row + 1) * rowLength), start);
+  }
+  return pixels;
 }
 
 // Immutable collection helpers

@@ -22,6 +22,7 @@ Verify every change that affects the UI in a real browser before calling it done
 - Change documents only by applying operations in transactions, never by mutating them. Documents are immutable.
 - Keep `src/document/` free of React, framework and Cloudflare imports so it runs everywhere; oxlint enforces this.
 - A new operation needs a TypeBox schema, an exact inverse, invariant coverage, unit tests for its preconditions, and a case in `test-support/random-operations.ts` so the property tests exercise it.
+- Changing the stored document shape means bumping `DOCUMENT_SCHEMA_VERSION`, adding a migration in `migrations.ts`, and regenerating `docs/schemas/` with `pnpm test -u`. Never edit a shipped migration.
 
 ## Conventions
 

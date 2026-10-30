@@ -30,6 +30,14 @@ export class VersionConflictError extends Error {
   }
 }
 
+/** A file or stored document can't be opened: corrupt, truncated, or from a newer version. */
+export class FileFormatError extends Error {
+  constructor(reason: string) {
+    super(`Can't open the file: ${reason}`);
+    this.name = "FileFormatError";
+  }
+}
+
 /** JSON input doesn't match a wire schema. */
 export class WireFormatError extends Error {
   readonly problems: readonly string[];

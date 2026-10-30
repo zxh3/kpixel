@@ -280,6 +280,61 @@ describe("cels", () => {
   });
 });
 
+/** A document whose only cel is a 3×2 RGBA image with pixel n filled with byte n. */
+function documentWithNumberedPixels() {
+  const { document, celData } = documentWithCel();
+  const image = blankImage(document, 3, 2);
+  for (let pixel = 0; pixel < 6; pixel++) {
+    image.pixels.fill(pixel, pixel * 4, pixel * 4 + 4);
+  }
+  return {
+    document: apply(document, { type: "setCelData", celDataId: celData.id, image }),
+    celDataId: celData.id,
+  };
+}
+
+describe("pixel patches", () => {
+  test("patchCelPixels replaces only the rectangle, and its inverse holds the old pixels", () => {
+    const { document, celDataId } = documentWithNumberedPixels();
+    const patch = new Uint8Array(2 * 4).fill(9);
+    const { document: next, inverse } = applyOperation(document, {
+      type: "patchCelPixels",
+      celDataId,
+      x: 1,
+      y: 1,
+      width: 2,
+      height: 1,
+      pixels: patch,
+    });
+
+    const firstBytes = [...next.celData[celDataId]!.image.pixels].filter((_, i) => i % 4 === 0);
+    expect(firstBytes).toEqual([0, 1, 2, 3, 9, 9]);
+    expect(inverse).toEqual([
+      {
+        type: "patchCelPixels",
+        celDataId,
+        x: 1,
+        y: 1,
+        width: 2,
+        height: 1,
+        pixels: new Uint8Array([4, 4, 4, 4, 5, 5, 5, 5]),
+      },
+    ]);
+    expect(applyOperations(next, inverse).document).toStrictEqual(document);
+  });
+
+  test("patches must fit inside the image and match its pixel format", () => {
+    const { document, celDataId } = documentWithNumberedPixels();
+    const base = { type: "patchCelPixels" as const, celDataId, x: 2, y: 0, width: 2, height: 1 };
+    expect(() => applyOperation(document, { ...base, pixels: new Uint8Array(8) })).toThrow(
+      /doesn't fit/,
+    );
+    expect(() => applyOperation(document, { ...base, x: 0, pixels: new Uint8Array(2) })).toThrow(
+      /expected 8/,
+    );
+  });
+});
+
 describe("operations are canonical", () => {
   test("undefined-valued properties never reach the document", () => {
     const document = createDocument({ width: 8, height: 8 });

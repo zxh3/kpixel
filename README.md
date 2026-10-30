@@ -45,8 +45,10 @@ src/
   document/        document model, operations and transactions (pure TypeScript)
   lib/             shared utilities
   routes/          file-based routes (`__root.tsx` is the HTML shell)
+  storage/         browser storage (IndexedDB blob cache)
   router.tsx       router factory
   styles.css       Tailwind entry + shadcn theme tokens
+docs/schemas/      published JSON Schema for .kpixel files (generated; `pnpm test -u` updates it)
 wrangler.jsonc     Worker config (bindings, vars, compatibility)
 ```
 

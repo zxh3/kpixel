@@ -36,13 +36,13 @@ TanStack Start on Cloudflare Workers, Tailwind and shadcn/ui, oxlint and oxfmt, 
 - [x] **Document model.** Aseprite-shaped graph (sprite, layers, frames, cels, cel data, tags, slices, palette, user data) with a stable UUID on every entity, RGBA and indexed colour, and invariants enforced in code. See [document model](design/document-model.md).
 - [x] **Commands and transactions.** Serializable ops with schemas and exact inverses; a transaction envelope with label, actor and base version; undo and redo.
 - [ ] **Model completeness for `.aseprite`.** Tilesets and tilemap layers, grayscale colour mode, per-frame palettes.
-- [ ] **Blob store.** Content-addressed pixel blobs (hash keys), chunked pixel patches, local cache in IndexedDB or OPFS.
-- [ ] **Native format.** Versioned JSON manifest plus blobs, downloadable as a zip, with a published schema and migrations for documents and transaction logs.
+- [x] **Blob store.** Content-addressed pixel blobs (SHA-256 keys), region pixel patches, local cache in IndexedDB.
+- [x] **Native format.** `.kpixel` zip of a versioned JSON manifest plus blobs, with a [published schema](schemas/kpixel-file-v1.schema.json) and document migrations.
 - [ ] **`.aseprite` codec.** Clean-room reader and writer from the public spec, preserving unknown chunks and extension data.
 - [ ] **Conformance corpus.** Real Aseprite files that must open, save and reopen losslessly; fuzzing for the codec.
 - [ ] **PNG import and export.**
 - [x] **Provenance fields.** Origin on every cel image and actor on every transaction, even before any AI exists.
-- [ ] **Server skeleton.** Custom server entry, a single-user `DocumentRoom` Durable Object that stores the op log, and save and load through it.
+- [ ] **Server skeleton.** Custom server entry, a single-user `DocumentRoom` Durable Object that stores a versioned op log, R2 for blobs, and save and load through it.
 
 **Must make solid:** stable IDs, op versioning and migrations, property-based tests for invariants and undo.
 

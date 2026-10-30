@@ -37,7 +37,8 @@ export const UserDataSchema = Type.Object({
 export const ColorModeSchema = Type.Union([Type.Literal("rgba"), Type.Literal("indexed")]);
 export const PixelFormatSchema = Type.Union([Type.Literal("rgba8"), Type.Literal("indexed8")]);
 
-const PixelDataSchema = Type.Codec(Type.String({ contentEncoding: "base64" }))
+/** Raw pixel bytes: base64 on the wire, Uint8Array in memory. */
+export const PixelDataSchema = Type.Codec(Type.String({ contentEncoding: "base64" }))
   .Decode((base64) => decodeBase64(base64))
   .Encode((bytes: Uint8Array) => encodeBase64(bytes));
 

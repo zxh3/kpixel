@@ -17,5 +17,10 @@
     "stylesheet": "./src/styles.css",
     "functions": ["cn", "cva"]
   },
-  "ignorePatterns": ["src/routeTree.gen.ts", "worker-configuration.d.ts", "pnpm-lock.yaml"]
+  "ignorePatterns": [
+    "src/routeTree.gen.ts",
+    "worker-configuration.d.ts",
+    "pnpm-lock.yaml",
+    "docs/schemas"
+  ]
 }

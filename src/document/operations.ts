@@ -8,6 +8,7 @@ import {
   FrameSchema,
   LayerSchema,
   PaletteSchema,
+  PixelDataSchema,
   PixelImageSchema,
   PixelRatioSchema,
   ProvenanceSchema,
@@ -139,6 +140,24 @@ export const SetCelDataSchema = Type.Object({
   userData: Type.Optional(RemovableUserDataSchema),
 });
 
+/**
+ * Replaces a rectangle of pixels inside a cel's image, leaving the rest untouched. Most editing
+ * (a brush stroke, a fill) changes a small region, so this keeps undo history and sync traffic
+ * proportional to the change rather than to the image. Growing an image needs setCelData.
+ */
+export const PatchCelPixelsSchema = Type.Object({
+  type: Type.Literal("patchCelPixels"),
+  celDataId: EntityIdSchema,
+  /** The rectangle, in the image's own coordinates; it must lie inside the image. */
+  x: Type.Integer({ minimum: 0 }),
+  y: Type.Integer({ minimum: 0 }),
+  width: Type.Integer({ minimum: 1 }),
+  height: Type.Integer({ minimum: 1 }),
+  /** Row-major pixels for the rectangle, in the document's pixel format. */
+  pixels: PixelDataSchema,
+  provenance: Type.Optional(ProvenanceSchema),
+});
+
 export const AddTagSchema = Type.Object({
   type: Type.Literal("addTag"),
   tag: TagSchema,
@@ -196,6 +215,7 @@ export const OperationSchema = Type.Union([
   RemoveCelSchema,
   SetCelZIndexSchema,
   SetCelDataSchema,
+  PatchCelPixelsSchema,
   AddTagSchema,
   RemoveTagSchema,
   SetTagPropertiesSchema,
