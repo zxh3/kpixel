@@ -1,9 +1,15 @@
-import type { Layer, SpriteDocument, UserData } from "../../schema";
+import type { Layer, Palette, SpriteDocument, Tileset, UserData } from "../../schema";
 import type { AsepriteChunk, AsepriteFile, AsepriteFrame } from "./file-structure";
 import type { PropertyMap } from "./properties";
 
 import { assertValidDocument } from "../../invariants";
-import { decodeBase64 } from "../../pixels";
+import {
+  decodeBase64,
+  tileFlipDiagonal,
+  tileFlipHorizontal,
+  tileFlipVertical,
+  tileIndexMask,
+} from "../../pixels";
 import { isUuid } from "./binary";
 import { headerFlags, serializeAsepriteFile } from "./file-structure";
 import {
@@ -60,6 +66,10 @@ function documentToAsepriteFile(document: SpriteDocument): AsepriteFile {
       ...celUserData.values(),
       ...document.tags.map((tag) => tag.userData),
       ...document.slices.map((slice) => slice.userData),
+      ...document.tilesets.flatMap((tileset) => [
+        tileset.userData,
+        ...tileset.tiles.map((tile) => tile.userData),
+      ]),
     ],
     externalFiles,
   );
@@ -88,19 +98,30 @@ function documentToAsepriteFile(document: SpriteDocument): AsepriteFile {
   if (externalFiles.length + extensionEntries.length > 0) {
     first.push({ type: "externalFiles", entries: [...externalFiles, ...extensionEntries] });
   }
-  first.push({
-    type: "palette",
-    size: document.palette.entries.length,
-    first: 0,
-    entries: document.palette.entries.map(({ color, name }) => ({
-      rgba: unpackRgba(color),
-      ...(name === undefined ? {} : { name }),
-    })),
-  });
+  first.push(paletteChunk(document.palette));
   pushIfDefined(first, userDataChunk(document.userData));
 
+  // A palette change is a full palette chunk at the start of its frame.
+  const frameIndexOf = new Map(document.frames.map((frame, index) => [frame.id, index]));
+  for (const change of document.paletteChanges) {
+    frames[frameIndexOf.get(change.frameId)!]!.chunks.push(paletteChunk(change.palette));
+  }
+
+  // Tilesets come before the layers that use them. Their ids in the file are their positions.
+  for (const [index, tileset] of document.tilesets.entries()) {
+    first.push(tilesetChunk(tileset, index));
+    // Tile user data is positional: the tileset's first, then one per tile, in order.
+    if (tileset.userData || tileset.tiles.some((tile) => tile.userData)) {
+      first.push(userDataChunk(tileset.userData) ?? { type: "userData" });
+      for (const tile of tileset.tiles) {
+        first.push(userDataChunk(tile.userData) ?? { type: "userData" });
+      }
+    }
+  }
+  const tilesetIndexById = new Map(document.tilesets.map((tileset, index) => [tileset.id, index]));
+
   for (const { layer, childLevel } of orderedLayers) {
-    first.push(layerChunk(layer, childLevel, writeUuids));
+    first.push(layerChunk(layer, childLevel, writeUuids, tilesetIndexById));
     pushIfDefined(first, userDataChunk(layer.userData));
   }
 
@@ -128,15 +149,24 @@ function documentToAsepriteFile(document: SpriteDocument): AsepriteFile {
         opacity: celData.opacity,
         zIndex: cel.zIndex,
         content:
-          linkedFrame === undefined
-            ? {
-                kind: "image",
-                width: celData.image.width,
-                height: celData.image.height,
-                pixels: celData.image.pixels,
-                compressed: true,
-              }
-            : { kind: "linked", framePosition: linkedFrame },
+          linkedFrame !== undefined
+            ? { kind: "linked", framePosition: linkedFrame }
+            : celData.image.format === "tile32"
+              ? {
+                  kind: "tilemap",
+                  width: celData.image.width,
+                  height: celData.image.height,
+                  bitsPerTile: 32,
+                  masks: tile32Masks,
+                  tiles: celData.image.pixels,
+                }
+              : {
+                  kind: "image",
+                  width: celData.image.width,
+                  height: celData.image.height,
+                  pixels: celData.image.pixels,
+                  compressed: true,
+                },
       });
       if (linkedFrame === undefined) {
         firstFrameByCelData.set(celData.id, frameIndex);
@@ -147,12 +177,11 @@ function documentToAsepriteFile(document: SpriteDocument): AsepriteFile {
   }
 
   if (document.tags.length > 0) {
-    const frameIndexById = new Map(document.frames.map((frame, index) => [frame.id, index]));
     first.push({
       type: "tags",
       tags: document.tags.map((tag) => ({
-        from: frameIndexById.get(tag.fromFrameId)!,
-        to: frameIndexById.get(tag.toFrameId)!,
+        from: frameIndexOf.get(tag.fromFrameId)!,
+        to: frameIndexOf.get(tag.toFrameId)!,
         direction: directionOrder.indexOf(tag.direction),
         repeat: tag.repeat,
         rgb: unpackRgb(tag.color ?? tag.userData?.color ?? 0),
@@ -167,11 +196,10 @@ function documentToAsepriteFile(document: SpriteDocument): AsepriteFile {
     }
   }
 
-  const frameIndexById = new Map(document.frames.map((frame, index) => [frame.id, index]));
   for (const slice of document.slices) {
     const keys = slice.keys
       .map((key) => ({
-        frame: frameIndexById.get(key.frameId)!,
+        frame: frameIndexOf.get(key.frameId)!,
         ...key.bounds,
         center: key.center,
         pivot: key.pivot,
@@ -191,7 +219,7 @@ function documentToAsepriteFile(document: SpriteDocument): AsepriteFile {
     header: {
       width: document.width,
       height: document.height,
-      colorDepth: document.colorMode === "rgba" ? 32 : 8,
+      colorDepth: { rgba: 32, grayscale: 16, indexed: 8 }[document.colorMode],
       // kpixel flattens groups before blending them in, so declare that unless the file came
       // from Aseprite without it.
       flags:
@@ -228,7 +256,67 @@ function orderLayers(document: SpriteDocument): OrderedLayer[] {
   return ordered;
 }
 
-function layerChunk(layer: Layer, childLevel: number, writeUuid: boolean): AsepriteChunk {
+/** kpixel's tile32 layout, which is also Aseprite's: a 29-bit index, then D, Y and X flip bits. */
+const tile32Masks = {
+  index: tileIndexMask,
+  flipX: tileFlipHorizontal,
+  flipY: tileFlipVertical,
+  flipDiagonal: tileFlipDiagonal,
+};
+
+function paletteChunk(palette: Palette): AsepriteChunk {
+  return {
+    type: "palette",
+    size: palette.entries.length,
+    first: 0,
+    entries: palette.entries.map(({ color, name }) => ({
+      rgba: unpackRgba(color),
+      ...(name === undefined ? {} : { name }),
+    })),
+  };
+}
+
+function tilesetChunk(tileset: Tileset, index: number): AsepriteChunk {
+  const data = asepriteData(tileset.userData);
+  // 2: tiles are included; 4: tile 0 is the empty tile. 8, 16 and 32 are Aseprite's
+  // flip-matching preferences, kept from imported files.
+  let flags = 2 | 4;
+  if (data.matchFlipX === true) flags |= 8;
+  if (data.matchFlipY === true) flags |= 16;
+  if (data.matchFlipDiagonal === true) flags |= 32;
+  const external = data.externalFile;
+  const externalFile =
+    isRecord(external) &&
+    typeof external.fileId === "number" &&
+    typeof external.tilesetId === "number"
+      ? { fileId: external.fileId, tilesetId: external.tilesetId }
+      : undefined;
+  if (externalFile) flags |= 1;
+  const tileLength = tileset.tiles[0]!.image.pixels.length;
+  const tilesImage = new Uint8Array(tileLength * tileset.tiles.length);
+  tileset.tiles.forEach((tile, tileIndex) =>
+    tilesImage.set(tile.image.pixels, tileIndex * tileLength),
+  );
+  return {
+    type: "tileset",
+    tilesetId: index,
+    flags,
+    tileCount: tileset.tiles.length,
+    tileWidth: tileset.tileWidth,
+    tileHeight: tileset.tileHeight,
+    baseIndex: tileset.baseIndex,
+    name: tileset.name,
+    externalFile,
+    tilesImage,
+  };
+}
+
+function layerChunk(
+  layer: Layer,
+  childLevel: number,
+  writeUuid: boolean,
+  tilesetIndexById: Map<string, number>,
+): AsepriteChunk {
   const data = asepriteData(layer.userData);
   let flags = 0;
   if (layer.visible) flags |= layerFlags.visible;
@@ -241,7 +329,8 @@ function layerChunk(layer: Layer, childLevel: number, writeUuid: boolean): Asepr
   return {
     type: "layer",
     flags,
-    layerType: layer.kind === "group" ? layerTypes.group : layerTypes.image,
+    layerType: layerTypes[layer.kind],
+    ...(layer.kind === "tilemap" ? { tilesetIndex: tilesetIndexById.get(layer.tilesetId)! } : {}),
     childLevel,
     blendMode: blendModeOrder.indexOf(layer.blendMode),
     opacity: layer.opacity,

@@ -4,24 +4,35 @@ import type {
   CelData,
   Frame,
   Layer,
+  PaletteChange,
   PaletteEntry,
   Slice,
   SliceKey,
   SpriteDocument,
   Tag,
+  Tileset,
   UserData,
 } from "../../schema";
-import type { AsepriteChunk, AsepriteFile } from "./file-structure";
+import type { AsepriteChunk, AsepriteFile, CelContent } from "./file-structure";
 import type { PropertyMap } from "./properties";
 
 import { createDocument } from "../../create-document";
 import { FileFormatError } from "../../errors";
 import { createId } from "../../ids";
 import { findDocumentProblems } from "../../invariants";
-import { encodeBase64, packRgba } from "../../pixels";
+import {
+  encodeBase64,
+  packRgba,
+  pixelByteLength,
+  pixelFormatForColorMode,
+  tileFlipDiagonal,
+  tileFlipHorizontal,
+  tileFlipVertical,
+  writeTile,
+} from "../../pixels";
 import { DOCUMENT_SCHEMA_VERSION, maxPaletteSize } from "../../schema";
 import { isUuid } from "./binary";
-import { chunkTypes, headerFlags, parseAsepriteFile } from "./file-structure";
+import { headerFlags, parseAsepriteFile } from "./file-structure";
 import {
   asepriteDataNamespace,
   blendModeOrder,
@@ -61,13 +72,14 @@ type UserDataTarget =
   | { kind: "layer"; index: number }
   | { kind: "celData"; id: string }
   | { kind: "tags"; nextIndex: number; endIndex: number }
-  | { kind: "slice"; index: number };
+  | { kind: "slice"; index: number }
+  /** The first user data after a tileset is the tileset's, then one per tile in order. */
+  | { kind: "tileset"; index: number; nextTile: number };
 
 class AsepriteReader {
   readonly #file: AsepriteFile;
   readonly #warnings = new Set<string>();
   readonly #colorMode: ColorMode;
-  readonly #grayscale: boolean;
   readonly #frames: Frame[];
   readonly #layers: LayerEntry[] = [];
   readonly #levelStack: number[] = [];
@@ -78,19 +90,22 @@ class AsepriteReader {
   readonly #slices: Slice[] = [];
   readonly #extensionNames = new Map<number, string>();
   readonly #spriteData: Record<string, unknown> = {};
+  /** The palette as of the frame being read; palette chunks are deltas to it. */
   #palette: PaletteEntry[] = [];
-  #hasNewPalette = false;
+  #basePalette: PaletteEntry[] = [];
+  readonly #paletteChanges: PaletteChange[] = [];
+  readonly #tilesets: Tileset[] = [];
+  /** Tileset ids by their id in the file, which tilemap layers refer to. */
+  readonly #tilesetIdsByFileId = new Map<number, string>();
+  /** File tileset ids of tilemap layers, by layer index, resolved once all chunks are read. */
+  readonly #tilemapTilesets = new Map<number, number>();
   #spriteUserData: UserData | undefined;
   #target: UserDataTarget | undefined;
 
   constructor(file: AsepriteFile) {
     this.#file = file;
     const { colorDepth, speed } = file.header;
-    this.#grayscale = colorDepth === 16;
-    this.#colorMode = colorDepth === 8 ? "indexed" : "rgba";
-    if (this.#grayscale) {
-      this.#warnings.add("Grayscale sprites open as RGBA; the pixels look the same.");
-    }
+    this.#colorMode = colorDepth === 8 ? "indexed" : colorDepth === 16 ? "grayscale" : "rgba";
     if (file.frames.length === 0) {
       throw new FileFormatError("the sprite has no frames");
     }
@@ -104,6 +119,7 @@ class AsepriteReader {
     this.#collectExternalFiles();
     for (const [frameIndex, frame] of this.#file.frames.entries()) {
       const oldPalettes: Extract<AsepriteChunk, { type: "oldPalette" }>[] = [];
+      const hasNewPalette = frame.chunks.some((chunk) => chunk.type === "palette");
       for (const chunk of frame.chunks) {
         if (chunk.type === "oldPalette") {
           oldPalettes.push(chunk);
@@ -112,11 +128,18 @@ class AsepriteReader {
         }
         this.#readChunk(chunk, frameIndex);
       }
-      if (frameIndex === 0 && !this.#hasNewPalette) {
-        // Old palette chunks only count when there's no new one.
+      // Old palette chunks only count when the frame has no new one.
+      if (!hasNewPalette) {
         oldPalettes.forEach((chunk) => this.#applyOldPalette(chunk));
-      } else if (frameIndex > 0 && oldPalettes.length > 0) {
-        this.#warnPaletteChange();
+      }
+      const paletteChanged = hasNewPalette || oldPalettes.length > 0;
+      if (frameIndex === 0) {
+        this.#basePalette = [...this.#palette];
+      } else if (paletteChanged) {
+        this.#paletteChanges.push({
+          frameId: this.#frames[frameIndex]!.id,
+          palette: { entries: this.#limitPalette([...this.#palette]) },
+        });
       }
     }
     return { document: this.#buildDocument(), warnings: [...this.#warnings] };
@@ -144,14 +167,12 @@ class AsepriteReader {
   #readChunk(chunk: AsepriteChunk, frameIndex: number) {
     switch (chunk.type) {
       case "palette":
-        if (frameIndex === 0) {
-          this.#applyPalette(chunk);
-          this.#hasNewPalette = true;
-          this.#target = { kind: "sprite" };
-        } else {
-          this.#warnPaletteChange();
-          this.#target = undefined;
-        }
+        this.#applyPalette(chunk);
+        // Sprite user data follows the first frame's palette chunk.
+        this.#target = frameIndex === 0 ? { kind: "sprite" } : undefined;
+        return;
+      case "tileset":
+        this.#readTileset(chunk);
         return;
       case "layer":
         this.#readLayer(chunk);
@@ -204,9 +225,6 @@ class AsepriteReader {
         this.#target = undefined;
         return;
       case "unknown":
-        if (chunk.chunkType === chunkTypes.tileset) {
-          throw new FileFormatError("tilemaps aren't supported yet");
-        }
         this.#warnings.add(
           `Unrecognised data (chunk type 0x${chunk.chunkType.toString(16)}) was ignored.`,
         );
@@ -218,10 +236,8 @@ class AsepriteReader {
   }
 
   #readLayer(chunk: Extract<AsepriteChunk, { type: "layer" }>) {
-    if (chunk.layerType === layerTypes.tilemap) {
-      throw new FileFormatError("tilemaps aren't supported yet");
-    }
-    if (chunk.layerType !== layerTypes.image && chunk.layerType !== layerTypes.group) {
+    const knownTypes: number[] = [layerTypes.image, layerTypes.group, layerTypes.tilemap];
+    if (!knownTypes.includes(chunk.layerType)) {
       throw new FileFormatError(`unknown layer type ${chunk.layerType}`);
     }
     const index = this.#layers.length;
@@ -253,14 +269,21 @@ class AsepriteReader {
       opacity: opacityValid ? chunk.opacity : 255,
       blendMode,
     };
-    let layer: Layer = isGroup
-      ? {
-          ...common,
-          kind: "group",
-          childIds: [],
-          collapsed: (chunk.flags & layerFlags.collapsed) !== 0,
-        }
-      : { ...common, kind: "image", reference: (chunk.flags & layerFlags.reference) !== 0 };
+    let layer: Layer;
+    if (isGroup) {
+      layer = {
+        ...common,
+        kind: "group",
+        childIds: [],
+        collapsed: (chunk.flags & layerFlags.collapsed) !== 0,
+      };
+    } else if (chunk.layerType === layerTypes.tilemap) {
+      // The tileset id is filled in once every chunk has been read.
+      layer = { ...common, kind: "tilemap", tilesetId: "" };
+      this.#tilemapTilesets.set(index, chunk.tilesetIndex ?? 0);
+    } else {
+      layer = { ...common, kind: "image", reference: (chunk.flags & layerFlags.reference) !== 0 };
+    }
 
     const asepriteData: Record<string, boolean> = {};
     if (chunk.flags & layerFlags.lockMovement) asepriteData.lockMovement = true;
@@ -276,9 +299,10 @@ class AsepriteReader {
 
   #readCel(chunk: Extract<AsepriteChunk, { type: "cel" }>, frameIndex: number) {
     const entry = this.#layers[chunk.layerIndex];
-    if (!entry || entry.layer.kind !== "image") {
+    if (!entry || entry.layer.kind === "group") {
       throw new FileFormatError("a cel refers to a missing layer");
     }
+    const isTilemapLayer = entry.layer.kind === "tilemap";
     const key = `${chunk.layerIndex}/${frameIndex}`;
     if (this.#celByLayerAndFrame.has(key)) {
       throw new FileFormatError("a layer has two cels on the same frame");
@@ -286,9 +310,10 @@ class AsepriteReader {
 
     let celDataId: string;
     const { content } = chunk;
-    if (content.kind === "tilemap") {
-      throw new FileFormatError("tilemaps aren't supported yet");
-    } else if (content.kind === "linked") {
+    if (content.kind !== "linked" && (content.kind === "tilemap") !== isTilemapLayer) {
+      throw new FileFormatError("a cel doesn't match its layer's type");
+    }
+    if (content.kind === "linked") {
       const linked = this.#celByLayerAndFrame.get(`${chunk.layerIndex}/${content.framePosition}`);
       if (!linked) {
         this.#warnings.add("A linked cel pointed at a missing cel and was dropped.");
@@ -307,12 +332,20 @@ class AsepriteReader {
         x: chunk.x,
         y: chunk.y,
         opacity: chunk.opacity,
-        image: {
-          width: content.width,
-          height: content.height,
-          format: this.#colorMode === "rgba" ? "rgba8" : "indexed8",
-          pixels: this.#grayscale ? grayscaleToRgba(content.pixels) : content.pixels,
-        },
+        image:
+          content.kind === "tilemap"
+            ? {
+                width: content.width,
+                height: content.height,
+                format: "tile32",
+                pixels: toTile32(content),
+              }
+            : {
+                width: content.width,
+                height: content.height,
+                format: pixelFormatForColorMode(this.#colorMode),
+                pixels: content.pixels,
+              },
         provenance: { origin: "imported" },
       };
     }
@@ -449,10 +482,68 @@ class AsepriteReader {
         this.#target = undefined;
         return;
       }
+      case "tileset": {
+        const tileset = this.#tilesets[target.index]!;
+        const userData = withColor(fields, color);
+        const hasData = Object.keys(userData).length > 0;
+        if (target.nextTile === -1) {
+          if (hasData)
+            this.#tilesets[target.index] = {
+              ...tileset,
+              userData: mergeUserData(tileset.userData, userData),
+            };
+        } else if (target.nextTile < tileset.tiles.length) {
+          const tiles = [...tileset.tiles];
+          if (hasData) tiles[target.nextTile] = { ...tiles[target.nextTile]!, userData };
+          this.#tilesets[target.index] = { ...tileset, tiles };
+        }
+        target.nextTile += 1;
+        return;
+      }
       case undefined:
         this.#warnings.add("User data attached to unsupported content was ignored.");
         return;
     }
+  }
+
+  #readTileset(chunk: Extract<AsepriteChunk, { type: "tileset" }>) {
+    if (!chunk.tilesImage) {
+      throw new FileFormatError(
+        `tileset "${chunk.name}" is stored in another file, which isn't supported yet`,
+      );
+    }
+    if (!(chunk.flags & 4)) {
+      throw new FileFormatError(`tileset "${chunk.name}" uses an old format that isn't supported`);
+    }
+    const format = pixelFormatForColorMode(this.#colorMode);
+    const tileLength = pixelByteLength(format, chunk.tileWidth, chunk.tileHeight);
+    const tiles = Array.from({ length: chunk.tileCount }, (_, index) => ({
+      image: {
+        width: chunk.tileWidth,
+        height: chunk.tileHeight,
+        format,
+        pixels: chunk.tilesImage!.slice(index * tileLength, (index + 1) * tileLength),
+      },
+    }));
+    let tileset: Tileset = {
+      id: createId(),
+      name: chunk.name,
+      tileWidth: chunk.tileWidth,
+      tileHeight: chunk.tileHeight,
+      tiles,
+      baseIndex: chunk.baseIndex,
+    };
+    const asepriteData: Record<string, unknown> = {};
+    if (chunk.flags & 8) asepriteData.matchFlipX = true;
+    if (chunk.flags & 16) asepriteData.matchFlipY = true;
+    if (chunk.flags & 32) asepriteData.matchFlipDiagonal = true;
+    if (chunk.externalFile) asepriteData.externalFile = chunk.externalFile;
+    this.#addAsepriteData(tileset, asepriteData, (next) => {
+      tileset = next;
+    });
+    this.#tilesetIdsByFileId.set(chunk.tilesetId, tileset.id);
+    this.#tilesets.push(tileset);
+    this.#target = { kind: "tileset", index: this.#tilesets.length - 1, nextTile: -1 };
   }
 
   #propertiesToJson(maps: PropertyMap[]): Record<string, unknown> | undefined {
@@ -473,6 +564,7 @@ class AsepriteReader {
   #applyPalette(chunk: Extract<AsepriteChunk, { type: "palette" }>) {
     this.#resizePalette(chunk.size);
     for (const [offset, entry] of chunk.entries.entries()) {
+      if (chunk.first + offset >= chunk.size) break;
       const paletteEntry: PaletteEntry = { color: packRgba(...entry.rgba) };
       if (entry.name !== undefined) paletteEntry.name = entry.name;
       this.#palette[chunk.first + offset] = paletteEntry;
@@ -499,10 +591,18 @@ class AsepriteReader {
     this.#palette.length = size;
   }
 
-  #warnPaletteChange() {
-    this.#warnings.add(
-      "Palette changes after the first frame aren't supported yet; the first palette is used.",
-    );
+  /** Keeps a palette within the size kpixel supports, warning once if it had to cut it. */
+  #limitPalette(entries: PaletteEntry[]): PaletteEntry[] {
+    if (entries.length === 0) {
+      return createDocument({ width: 1, height: 1 }).palette.entries;
+    }
+    if (entries.length > maxPaletteSize) {
+      this.#warnings.add(
+        `A palette has ${entries.length} colors; only the first ${maxPaletteSize} were kept.`,
+      );
+      return entries.slice(0, maxPaletteSize);
+    }
+    return entries;
   }
 
   /** Adds data under the kpixel/aseprite namespace of an entity's user data. */
@@ -533,6 +633,17 @@ class AsepriteReader {
     for (const { layer } of this.#layers) {
       layers[layer.id] = layer;
     }
+    for (const [index, fileTilesetId] of this.#tilemapTilesets) {
+      const entry = this.#layers[index]!;
+      const tilesetId = this.#tilesetIdsByFileId.get(fileTilesetId);
+      if (!tilesetId || entry.layer.kind !== "tilemap") {
+        throw new FileFormatError(
+          `tilemap layer "${entry.layer.name}" refers to a missing tileset`,
+        );
+      }
+      entry.layer = { ...entry.layer, tilesetId };
+      layers[entry.layer.id] = entry.layer;
+    }
     for (const { layer, parentIndex } of this.#layers) {
       if (parentIndex === null) {
         rootLayerIds.push(layer.id);
@@ -544,18 +655,14 @@ class AsepriteReader {
       }
     }
 
-    let palette = this.#palette;
-    if (palette.length === 0) {
-      palette = createDocument({ width: 1, height: 1 }).palette.entries;
-    } else if (palette.length > maxPaletteSize) {
-      this.#warnings.add(
-        `The palette has ${palette.length} colors; only the first ${maxPaletteSize} were kept.`,
-      );
-      palette = palette.slice(0, maxPaletteSize);
-    }
+    const palette = this.#limitPalette(this.#basePalette);
 
     let { transparentIndex } = header;
-    if (this.#colorMode === "indexed" && transparentIndex >= palette.length) {
+    const smallestPalette = Math.min(
+      palette.length,
+      ...this.#paletteChanges.map((change) => change.palette.entries.length),
+    );
+    if (this.#colorMode === "indexed" && transparentIndex >= smallestPalette) {
       this.#warnings.add("The transparent color index was outside the palette and was reset to 0.");
       transparentIndex = 0;
     }
@@ -602,6 +709,8 @@ class AsepriteReader {
       tags: this.#tags,
       slices: this.#slices,
       palette: { entries: palette },
+      paletteChanges: this.#paletteChanges,
+      tilesets: this.#tilesets,
       ...(userData ? { userData } : {}),
     };
     const problems = findDocumentProblems(document);
@@ -626,11 +735,23 @@ function mergeUserData(existing: UserData | undefined, added: UserData): UserDat
   };
 }
 
-function grayscaleToRgba(pixels: Uint8Array): Uint8Array {
-  const rgba = new Uint8Array((pixels.length / 2) * 4);
-  for (let pixel = 0; pixel < pixels.length / 2; pixel++) {
-    const value = pixels[pixel * 2]!;
-    rgba.set([value, value, value, pixels[pixel * 2 + 1]!], pixel * 4);
+/** Converts a file's tile references, at its bit depth and masks, to kpixel's tile32 layout. */
+function toTile32(content: Extract<CelContent, { kind: "tilemap" }>): Uint8Array {
+  const { width, height, bitsPerTile, masks, tiles } = content;
+  const view = new DataView(tiles.buffer, tiles.byteOffset, tiles.byteLength);
+  const pixels = new Uint8Array(width * height * 4);
+  for (let cell = 0; cell < width * height; cell++) {
+    const value =
+      bitsPerTile === 32
+        ? view.getUint32(cell * 4, true)
+        : bitsPerTile === 16
+          ? view.getUint16(cell * 2, true)
+          : view.getUint8(cell);
+    let reference = (value & masks.index) >>> 0;
+    if (value & masks.flipX) reference |= tileFlipHorizontal;
+    if (value & masks.flipY) reference |= tileFlipVertical;
+    if (value & masks.flipDiagonal) reference |= tileFlipDiagonal;
+    writeTile(pixels, cell, reference >>> 0);
   }
-  return rgba;
+  return pixels;
 }

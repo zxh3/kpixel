@@ -57,7 +57,16 @@ export interface AsepriteHeader {
 export type CelContent =
   | { kind: "image"; width: number; height: number; pixels: Uint8Array; compressed: boolean }
   | { kind: "linked"; framePosition: number }
-  | { kind: "tilemap"; data: Uint8Array };
+  | {
+      kind: "tilemap";
+      width: number;
+      height: number;
+      bitsPerTile: number;
+      /** The file's bit masks for the tile index and the X, Y and diagonal flips. */
+      masks: { index: number; flipX: number; flipY: number; flipDiagonal: number };
+      /** Uncompressed tile references, bitsPerTile each, little-endian. */
+      tiles: Uint8Array;
+    };
 
 export type AsepriteChunk =
   | {
@@ -125,6 +134,19 @@ export type AsepriteChunk =
       }[];
       ninePatch: boolean;
       hasPivot: boolean;
+    }
+  | {
+      type: "tileset";
+      tilesetId: number;
+      flags: number;
+      tileCount: number;
+      tileWidth: number;
+      tileHeight: number;
+      baseIndex: number;
+      name: string;
+      externalFile?: { fileId: number; tilesetId: number };
+      /** Uncompressed pixels of all tiles stacked vertically, when the file includes them. */
+      tilesImage?: Uint8Array;
     }
   | { type: "deprecated"; chunkType: number }
   | { type: "unknown"; chunkType: number; data: Uint8Array };
@@ -340,7 +362,9 @@ function parseChunk(
       const first = reader.dword();
       const last = reader.dword();
       reader.skip(8);
-      if (last < first || last >= size) {
+      // When a palette shrinks, Aseprite still writes the old, longer range of entries; the ones
+      // past the new size are ignored.
+      if (last < first || last >= maxPaletteEntries) {
         throw new FileFormatError("a palette chunk is damaged");
       }
       const entries = reader.array(last - first + 1, 6, () => {
@@ -386,8 +410,40 @@ function parseChunk(
     case chunkTypes.mask:
     case chunkTypes.path:
       return { type: "deprecated", chunkType };
+    case chunkTypes.tileset: {
+      const tilesetId = reader.dword();
+      const flags = reader.dword();
+      const tileCount = reader.dword();
+      const tileWidth = reader.word();
+      const tileHeight = reader.word();
+      const baseIndex = reader.short();
+      reader.skip(14);
+      const name = reader.string();
+      const externalFile =
+        flags & 1 ? { fileId: reader.dword(), tilesetId: reader.dword() } : undefined;
+      let tilesImage: Uint8Array | undefined;
+      if (flags & 2) {
+        const compressedLength = reader.dword();
+        const length = reservePixelBytes(
+          budget,
+          tileWidth * tileHeight * tileCount * bytesPerPixel,
+        );
+        tilesImage = inflateExactly(reader.bytes(compressedLength), length);
+      }
+      return {
+        type: "tileset",
+        tilesetId,
+        flags,
+        tileCount,
+        tileWidth,
+        tileHeight,
+        baseIndex,
+        name,
+        externalFile,
+        tilesImage,
+      };
+    }
     default:
-      // Includes tilesets (0x2023), which kpixel doesn't model yet.
       return { type: "unknown", chunkType, data: reader.bytes(reader.remaining) };
   }
 }
@@ -419,8 +475,30 @@ function parseCelContent(
         compressed: true,
       };
     }
-    case 3:
-      return { kind: "tilemap", data: reader.bytes(reader.remaining) };
+    case 3: {
+      const width = reader.word();
+      const height = reader.word();
+      const bitsPerTile = reader.word();
+      const masks = {
+        index: reader.dword(),
+        flipX: reader.dword(),
+        flipY: reader.dword(),
+        flipDiagonal: reader.dword(),
+      };
+      reader.skip(10);
+      if (![8, 16, 32].includes(bitsPerTile)) {
+        throw new FileFormatError(`unsupported tile size of ${bitsPerTile} bits`);
+      }
+      const length = reservePixelBytes(budget, (width * height * bitsPerTile) / 8);
+      return {
+        kind: "tilemap",
+        width,
+        height,
+        bitsPerTile,
+        masks,
+        tiles: inflateExactly(reader.bytes(reader.remaining), length),
+      };
+    }
     default:
       throw new FileFormatError(`unknown cel type ${celType}`);
   }
@@ -646,6 +724,26 @@ function writeChunk(writer: ByteWriter, chunk: AsepriteChunk, header: AsepriteHe
         }
       }
       return;
+    case "tileset":
+      writer.word(chunkTypes.tileset);
+      writer.dword(chunk.tilesetId);
+      writer.dword(chunk.flags);
+      writer.dword(chunk.tileCount);
+      writer.word(chunk.tileWidth);
+      writer.word(chunk.tileHeight);
+      writer.short(chunk.baseIndex);
+      writer.zeros(14);
+      writer.string(chunk.name);
+      if (chunk.flags & 1) {
+        writer.dword(chunk.externalFile?.fileId ?? 0);
+        writer.dword(chunk.externalFile?.tilesetId ?? 0);
+      }
+      if (chunk.flags & 2) {
+        const compressed = zlibSync(chunk.tilesImage ?? new Uint8Array());
+        writer.dword(compressed.length);
+        writer.bytes(compressed);
+      }
+      return;
     case "deprecated":
       throw new Error("Deprecated chunks are never written");
     case "unknown":
@@ -667,7 +765,15 @@ function writeCelContent(writer: ByteWriter, chunk: Extract<AsepriteChunk, { typ
       writer.word(content.framePosition);
       return;
     case "tilemap":
-      writer.bytes(content.data);
+      writer.word(content.width);
+      writer.word(content.height);
+      writer.word(content.bitsPerTile);
+      writer.dword(content.masks.index);
+      writer.dword(content.masks.flipX);
+      writer.dword(content.masks.flipY);
+      writer.dword(content.masks.flipDiagonal);
+      writer.zeros(10);
+      writer.bytes(zlibSync(content.tiles));
       return;
     case "image":
       writer.word(content.width);

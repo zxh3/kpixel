@@ -32,6 +32,8 @@ const corpus = [
   "indexed",
   "user-data",
   "sprite-settings",
+  "grayscale",
+  "tilemap",
 ];
 
 const workDirectory = mkdtempSync(join(tmpdir(), "kpixel-aseprite-"));
@@ -53,10 +55,13 @@ function describeSprite(file: string): string {
   ]);
 }
 
-/** Aseprite's flattened render of every frame, as RGBA. */
+/**
+ * Aseprite's flattened render of every frame, as RGBA. Sprites are converted to RGB first: saving
+ * an indexed sprite to PNG ignores cel and layer opacity, which an indexed PNG can't hold.
+ */
 function asepriteRenders(file: string, name: string): Uint8Array[] {
   const directory = mkdtempSync(join(workDirectory, `${name}-`));
-  aseprite([file, "--save-as", join(directory, "frame-{frame0}.png")]);
+  aseprite([file, "--color-mode", "rgb", "--save-as", join(directory, "frame-{frame0}.png")]);
   return readdirSync(directory)
     .toSorted((a, b) => Number.parseInt(a.slice(6)) - Number.parseInt(b.slice(6)))
     .map((entry) => toRgba(readFileSync(join(directory, entry))));
@@ -135,7 +140,7 @@ describe.skipIf(!existsSync(asepriteBinary))("compatibility with Aseprite", () =
  *
  * - Unless its "composite groups separately" preference is on, Aseprite saves without that flag
  *   and drops group opacity and blend modes.
- * - It resets the transparent index of RGBA sprites, where it has no effect, to 0.
+ * - It resets the transparent index of RGBA and grayscale sprites, where it has no effect, to 0.
  * - It drops user data whose text is empty.
  * - It reorders slices.
  */
@@ -154,7 +159,7 @@ function asAsepriteSaves(document: SpriteDocument): SpriteDocument {
   const normalized: SpriteDocument = withoutEmptyText({
     ...document,
     userData,
-    transparentIndex: document.colorMode === "rgba" ? 0 : document.transparentIndex,
+    transparentIndex: document.colorMode === "indexed" ? document.transparentIndex : 0,
     layers: Object.fromEntries(
       Object.entries(document.layers).map(([id, layer]) => [
         id,
@@ -167,6 +172,9 @@ function asAsepriteSaves(document: SpriteDocument): SpriteDocument {
       Object.entries(document.celData).map(([id, celData]) => [id, withoutEmptyText(celData)]),
     ),
     tags: document.tags.map(withoutEmptyText),
+    tilesets: document.tilesets.map((tileset) =>
+      withoutEmptyText({ ...tileset, tiles: tileset.tiles.map(withoutEmptyText) }),
+    ),
     slices: document.slices
       .map(withoutEmptyText)
       .toSorted((a, b) =>

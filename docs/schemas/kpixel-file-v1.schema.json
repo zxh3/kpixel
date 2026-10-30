@@ -31,7 +31,9 @@
         "celData",
         "tags",
         "slices",
-        "palette"
+        "palette",
+        "paletteChanges",
+        "tilesets"
       ],
       "properties": {
         "id": {
@@ -40,7 +42,7 @@
         },
         "schemaVersion": {
           "type": "number",
-          "const": 1
+          "const": 2
         },
         "colorMode": {
           "anyOf": [
@@ -51,6 +53,10 @@
             {
               "type": "string",
               "const": "indexed"
+            },
+            {
+              "type": "string",
+              "const": "grayscale"
             }
           ]
         },
@@ -400,6 +406,146 @@
                       "type": "boolean"
                     }
                   }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "visible",
+                    "locked",
+                    "opacity",
+                    "blendMode",
+                    "kind",
+                    "tilesetId"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "visible": {
+                      "type": "boolean"
+                    },
+                    "locked": {
+                      "type": "boolean"
+                    },
+                    "opacity": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    },
+                    "blendMode": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "const": "normal"
+                        },
+                        {
+                          "type": "string",
+                          "const": "multiply"
+                        },
+                        {
+                          "type": "string",
+                          "const": "screen"
+                        },
+                        {
+                          "type": "string",
+                          "const": "overlay"
+                        },
+                        {
+                          "type": "string",
+                          "const": "darken"
+                        },
+                        {
+                          "type": "string",
+                          "const": "lighten"
+                        },
+                        {
+                          "type": "string",
+                          "const": "color-dodge"
+                        },
+                        {
+                          "type": "string",
+                          "const": "color-burn"
+                        },
+                        {
+                          "type": "string",
+                          "const": "hard-light"
+                        },
+                        {
+                          "type": "string",
+                          "const": "soft-light"
+                        },
+                        {
+                          "type": "string",
+                          "const": "difference"
+                        },
+                        {
+                          "type": "string",
+                          "const": "exclusion"
+                        },
+                        {
+                          "type": "string",
+                          "const": "hue"
+                        },
+                        {
+                          "type": "string",
+                          "const": "saturation"
+                        },
+                        {
+                          "type": "string",
+                          "const": "color"
+                        },
+                        {
+                          "type": "string",
+                          "const": "luminosity"
+                        },
+                        {
+                          "type": "string",
+                          "const": "addition"
+                        },
+                        {
+                          "type": "string",
+                          "const": "subtract"
+                        },
+                        {
+                          "type": "string",
+                          "const": "divide"
+                        }
+                      ]
+                    },
+                    "userData": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "color": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 4294967295
+                        },
+                        "properties": {
+                          "type": "object",
+                          "patternProperties": {
+                            "^.*$": {}
+                          }
+                        }
+                      }
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "tilemap"
+                    },
+                    "tilesetId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
                 }
               ]
             }
@@ -507,6 +653,14 @@
                         {
                           "type": "string",
                           "const": "indexed8"
+                        },
+                        {
+                          "type": "string",
+                          "const": "graya8"
+                        },
+                        {
+                          "type": "string",
+                          "const": "tile32"
                         }
                       ]
                     },
@@ -803,6 +957,185 @@
               },
               "minItems": 1,
               "maxItems": 256
+            }
+          }
+        },
+        "paletteChanges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "frameId",
+              "palette"
+            ],
+            "properties": {
+              "frameId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "palette": {
+                "type": "object",
+                "required": [
+                  "entries"
+                ],
+                "properties": {
+                  "entries": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "color"
+                      ],
+                      "properties": {
+                        "color": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 4294967295
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "minItems": 1,
+                    "maxItems": 256
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tilesets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "tileWidth",
+              "tileHeight",
+              "tiles",
+              "baseIndex"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string"
+              },
+              "tileWidth": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "tileHeight": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "tiles": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "image"
+                  ],
+                  "properties": {
+                    "image": {
+                      "type": "object",
+                      "required": [
+                        "width",
+                        "height",
+                        "format",
+                        "blob"
+                      ],
+                      "properties": {
+                        "width": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        },
+                        "height": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        },
+                        "format": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "const": "rgba8"
+                            },
+                            {
+                              "type": "string",
+                              "const": "indexed8"
+                            },
+                            {
+                              "type": "string",
+                              "const": "graya8"
+                            },
+                            {
+                              "type": "string",
+                              "const": "tile32"
+                            }
+                          ]
+                        },
+                        "blob": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$",
+                          "description": "SHA-256 of the blob's bytes, as lowercase hex"
+                        }
+                      }
+                    },
+                    "userData": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "color": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 4294967295
+                        },
+                        "properties": {
+                          "type": "object",
+                          "patternProperties": {
+                            "^.*$": {}
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "minItems": 1
+              },
+              "baseIndex": {
+                "type": "integer",
+                "minimum": -32768,
+                "maximum": 32767
+              },
+              "userData": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295
+                  },
+                  "properties": {
+                    "type": "object",
+                    "patternProperties": {
+                      "^.*$": {}
+                    }
+                  }
+                }
+              }
             }
           }
         },

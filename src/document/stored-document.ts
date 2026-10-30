@@ -2,17 +2,24 @@ import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
 import type { BlobHash, BlobStore } from "./blobs";
-import type { CelData, SpriteDocument } from "./schema";
+import type { CelData, PixelImage, SpriteDocument, Tileset } from "./schema";
 
 import { BlobHashSchema, hashBlob } from "./blobs";
 import { FileFormatError, WireFormatError } from "./errors";
 import { assertValidDocument } from "./invariants";
 import { migrateStoredDocument } from "./migrations";
-import { CelDataSchema, PixelImageSchema, SpriteDocumentSchema } from "./schema";
+import {
+  CelDataSchema,
+  PixelImageSchema,
+  SpriteDocumentSchema,
+  TileSchema,
+  TilesetSchema,
+} from "./schema";
 
 // The stored form of a document, used for files and persistence: the same JSON as the wire
-// form, except that each image refers to its pixels by blob hash instead of embedding them.
-// Pixels live alongside as content-addressed blobs, so unchanged images are never rewritten.
+// form, except that each image (in cel data and in tilesets) refers to its pixels by blob hash
+// instead of embedding them. Pixels live alongside as content-addressed blobs, so unchanged
+// images are never rewritten.
 
 const { pixels: _inlinePixels, ...imageProperties } = PixelImageSchema.properties;
 
@@ -23,29 +30,46 @@ export const StoredCelDataSchema = Type.Object({
   image: StoredPixelImageSchema,
 });
 
+export const StoredTilesetSchema = Type.Object({
+  ...TilesetSchema.properties,
+  tiles: Type.Array(Type.Object({ ...TileSchema.properties, image: StoredPixelImageSchema }), {
+    minItems: 1,
+  }),
+});
+
 export const StoredSpriteDocumentSchema = Type.Object({
   ...SpriteDocumentSchema.properties,
   celData: Type.Record(Type.String(), StoredCelDataSchema),
+  tilesets: Type.Array(StoredTilesetSchema),
 });
 
 export type StoredSpriteDocument = Static<typeof StoredSpriteDocumentSchema>;
-type StoredCelData = Static<typeof StoredCelDataSchema>;
+type StoredPixelImage = Static<typeof StoredPixelImageSchema>;
 
 /** Splits a document into its stored form and the pixel blobs it references. */
 export async function toStoredDocument(
   document: SpriteDocument,
 ): Promise<{ document: StoredSpriteDocument; blobs: Map<BlobHash, Uint8Array> }> {
   const blobs = new Map<BlobHash, Uint8Array>();
-  const entries = await Promise.all(
-    Object.entries(document.celData).map(async ([id, data]) => {
-      const { pixels, ...image } = data.image;
-      const blob = await hashBlob(pixels);
-      blobs.set(blob, pixels);
-      const stored: StoredCelData = { ...data, image: { ...image, blob } };
-      return [id, stored] as const;
-    }),
+  const store = async ({ pixels, ...image }: PixelImage): Promise<StoredPixelImage> => {
+    const blob = await hashBlob(pixels);
+    blobs.set(blob, pixels);
+    return { ...image, blob };
+  };
+  const celData = await Promise.all(
+    Object.entries(document.celData).map(
+      async ([id, data]) => [id, { ...data, image: await store(data.image) }] as const,
+    ),
   );
-  return { document: { ...document, celData: Object.fromEntries(entries) }, blobs };
+  const tilesets = await Promise.all(
+    document.tilesets.map(async (tileset) => ({
+      ...tileset,
+      tiles: await Promise.all(
+        tileset.tiles.map(async (tile) => ({ ...tile, image: await store(tile.image) })),
+      ),
+    })),
+  );
+  return { document: { ...document, celData: Object.fromEntries(celData), tilesets }, blobs };
 }
 
 /** Migrates untrusted stored JSON to the current schema version and validates its shape. */
@@ -62,7 +86,12 @@ export function parseStoredDocument(input: unknown): StoredSpriteDocument {
 
 /** The blob hashes a stored document references, without duplicates. */
 export function blobHashesOf(document: StoredSpriteDocument): BlobHash[] {
-  return [...new Set(Object.values(document.celData).map((data) => data.image.blob))];
+  return [
+    ...new Set([
+      ...Object.values(document.celData).map((data) => data.image.blob),
+      ...document.tilesets.flatMap((tileset) => tileset.tiles.map((tile) => tile.image.blob)),
+    ]),
+  ];
 }
 
 /**
@@ -111,16 +140,25 @@ function attachPixels(
   stored: StoredSpriteDocument,
   blobs: ReadonlyMap<BlobHash, Uint8Array>,
 ): SpriteDocument {
-  const celData: Record<string, CelData> = {};
-  for (const [id, data] of Object.entries(stored.celData)) {
-    const { blob, ...image } = data.image;
+  const attach = ({ blob, ...image }: StoredPixelImage, owner: string): PixelImage => {
     const pixels = blobs.get(blob);
     if (!pixels) {
-      throw new FileFormatError(`pixel data ${blob} for cel data ${id} is missing`);
+      throw new FileFormatError(`pixel data ${blob} for ${owner} is missing`);
     }
-    celData[id] = { ...data, image: { ...image, pixels } };
+    return { ...image, pixels };
+  };
+  const celData: Record<string, CelData> = {};
+  for (const [id, data] of Object.entries(stored.celData)) {
+    celData[id] = { ...data, image: attach(data.image, `cel data ${id}`) };
   }
-  const document: SpriteDocument = { ...stored, celData };
+  const tilesets: Tileset[] = stored.tilesets.map((tileset) => ({
+    ...tileset,
+    tiles: tileset.tiles.map((tile, index) => ({
+      ...tile,
+      image: attach(tile.image, `tile ${index} of tileset ${tileset.id}`),
+    })),
+  }));
+  const document: SpriteDocument = { ...stored, celData, tilesets };
   assertValidDocument(document);
   return document;
 }

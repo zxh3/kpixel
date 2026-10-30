@@ -1,8 +1,14 @@
 import type { LayerId } from "./ids";
-import type { SpriteDocument } from "./schema";
+import type { Palette, SpriteDocument } from "./schema";
 
 import { DocumentInvariantError } from "./errors";
-import { pixelByteLength, pixelFormatForColorMode } from "./pixels";
+import {
+  findContentBounds,
+  pixelByteLength,
+  pixelFormatForColorMode,
+  readTile,
+  tileIndexMask,
+} from "./pixels";
 import { DOCUMENT_SCHEMA_VERSION, maxCanvasSize, maxPaletteSize } from "./schema";
 
 /**
@@ -22,6 +28,8 @@ export function findDocumentProblems(document: SpriteDocument): string[] {
   checkCels(document, frameIndexById, report);
   checkTags(document, frameIndexById, report);
   checkSlices(document, frameIndexById, report);
+  checkPaletteChanges(document, frameIndexById, report);
+  checkTilesets(document, report);
 
   return problems;
 }
@@ -47,14 +55,81 @@ function checkSprite(document: SpriteDocument, report: Report) {
   checkInteger(report, "pixelRatio.width", document.pixelRatio.width, 1, 255);
   checkInteger(report, "pixelRatio.height", document.pixelRatio.height, 1, 255);
 
-  const { entries } = document.palette;
-  checkInteger(report, "palette size", entries.length, 1, maxPaletteSize);
-  for (const [index, entry] of entries.entries()) {
-    checkInteger(report, `palette entry ${index} color`, entry.color, 0, 0xff_ff_ff_ff);
-  }
   checkInteger(report, "transparentIndex", document.transparentIndex, 0, 255);
+  checkPalette(document, document.palette, "the palette", report);
+}
+
+function checkPalette(document: SpriteDocument, palette: Palette, label: string, report: Report) {
+  const { entries } = palette;
+  checkInteger(report, `${label} size`, entries.length, 1, maxPaletteSize);
+  for (const [index, entry] of entries.entries()) {
+    checkInteger(report, `${label} entry ${index} color`, entry.color, 0, 0xff_ff_ff_ff);
+  }
   if (document.colorMode === "indexed" && document.transparentIndex >= entries.length) {
-    report(`transparentIndex ${document.transparentIndex} is outside the palette`);
+    report(`transparentIndex ${document.transparentIndex} is outside ${label}`);
+  }
+}
+
+function checkPaletteChanges(
+  document: SpriteDocument,
+  frameIndexById: Map<string, number>,
+  report: Report,
+) {
+  const framesWithChanges = new Set<string>();
+  for (const change of document.paletteChanges) {
+    const frameIndex = frameIndexById.get(change.frameId);
+    if (frameIndex === undefined) {
+      report(`a palette change refers to missing frame ${change.frameId}`);
+    } else if (frameIndex === 0) {
+      report("the first frame has a palette change; it uses the document palette");
+    }
+    if (framesWithChanges.has(change.frameId)) {
+      report(`frame ${change.frameId} has more than one palette change`);
+    }
+    framesWithChanges.add(change.frameId);
+    checkPalette(document, change.palette, `the palette at frame ${change.frameId}`, report);
+  }
+}
+
+function checkTilesets(document: SpriteDocument, report: Report) {
+  const expectedFormat = pixelFormatForColorMode(document.colorMode);
+  const tilesetIds = new Set<string>();
+  for (const tileset of document.tilesets) {
+    if (tilesetIds.has(tileset.id)) {
+      report(`tileset ${tileset.id} appears more than once`);
+    }
+    tilesetIds.add(tileset.id);
+    checkInteger(report, `tileset ${tileset.id} tile width`, tileset.tileWidth, 1, maxCanvasSize);
+    checkInteger(report, `tileset ${tileset.id} tile height`, tileset.tileHeight, 1, maxCanvasSize);
+    if (tileset.tiles.length === 0) {
+      report(`tileset ${tileset.id} has no empty tile 0`);
+    }
+    for (const [index, { image }] of tileset.tiles.entries()) {
+      const label = `tile ${index} of tileset ${tileset.id}`;
+      if (image.width !== tileset.tileWidth || image.height !== tileset.tileHeight) {
+        report(`${label} isn't ${tileset.tileWidth}×${tileset.tileHeight}`);
+      } else if (image.format !== expectedFormat) {
+        report(`${label} is ${image.format}, expected ${expectedFormat}`);
+      } else if (image.pixels.length !== pixelByteLength(image.format, image.width, image.height)) {
+        report(`${label} has the wrong number of bytes`);
+      } else if (
+        index === 0 &&
+        findContentBounds(
+          image.pixels,
+          image.format,
+          image.width,
+          image.height,
+          document.transparentIndex,
+        )
+      ) {
+        report(`tile 0 of tileset ${tileset.id} isn't empty`);
+      }
+    }
+  }
+  for (const layer of Object.values(document.layers)) {
+    if (layer.kind === "tilemap" && !tilesetIds.has(layer.tilesetId)) {
+      report(`tilemap layer ${layer.id} refers to missing tileset ${layer.tilesetId}`);
+    }
   }
 }
 
@@ -122,8 +197,8 @@ function checkCels(document: SpriteDocument, frameIndexById: Map<string, number>
     const layer = document.layers[cel.layerId];
     if (!layer) {
       report(`cel ${cel.id} references missing layer ${cel.layerId}`);
-    } else if (layer.kind !== "image") {
-      report(`cel ${cel.id} is on group ${cel.layerId}; only image layers hold cels`);
+    } else if (layer.kind === "group") {
+      report(`cel ${cel.id} is on group ${cel.layerId}; groups don't hold cels`);
     }
     if (!frameIndexById.has(cel.frameId)) {
       report(`cel ${cel.id} references missing frame ${cel.frameId}`);
@@ -159,10 +234,24 @@ function checkCels(document: SpriteDocument, frameIndexById: Map<string, number>
     const { image } = celData;
     checkInteger(report, `cel data ${celData.id} image width`, image.width, 1, maxCanvasSize);
     checkInteger(report, `cel data ${celData.id} image height`, image.height, 1, maxCanvasSize);
-    if (image.format !== expectedFormat) {
-      report(`cel data ${celData.id} image is ${image.format}, expected ${expectedFormat}`);
+    // Tilemap cels hold tile references; image cels hold pixels in the document's format.
+    const layer = document.layers[layerByCelData.get(celData.id) ?? ""];
+    const tileset =
+      layer?.kind === "tilemap"
+        ? document.tilesets.find((each) => each.id === layer.tilesetId)
+        : undefined;
+    const expected = layer?.kind === "tilemap" ? "tile32" : expectedFormat;
+    if (image.format !== expected) {
+      report(`cel data ${celData.id} image is ${image.format}, expected ${expected}`);
     } else if (image.pixels.length !== pixelByteLength(image.format, image.width, image.height)) {
       report(`cel data ${celData.id} image has the wrong number of bytes`);
+    } else if (tileset) {
+      for (let cell = 0; cell < image.width * image.height; cell++) {
+        if ((readTile(image.pixels, cell) & tileIndexMask) >= tileset.tiles.length) {
+          report(`cel data ${celData.id} refers to a tile missing from tileset ${tileset.id}`);
+          break;
+        }
+      }
     }
   }
 }

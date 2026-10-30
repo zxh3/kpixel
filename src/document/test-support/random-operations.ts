@@ -3,7 +3,14 @@ import * as fc from "fast-check";
 import type { Operation } from "../operations";
 import type { Layer, PixelImage, SpriteDocument, UserData } from "../schema";
 
-import { pixelByteLength, pixelFormatForColorMode } from "../pixels";
+import {
+  pixelByteLength,
+  pixelFormatForColorMode,
+  tileFlipDiagonal,
+  tileFlipHorizontal,
+  tileFlipVertical,
+  writeTile,
+} from "../pixels";
 
 type Generate = fc.GeneratorValue;
 
@@ -97,7 +104,7 @@ const operationBuilders: [weight: number, build: OperationBuilder][] = [
       const parentId = drawParentId(generate, document);
       return {
         type: "addLayer",
-        layer: drawNewLayer(generate),
+        layer: drawNewLayer(generate, document),
         parentId,
         index: generate(fc.integer, { min: 0, max: siblingCount(document, parentId) + 1 }),
       };
@@ -142,9 +149,15 @@ const operationBuilders: [weight: number, build: OperationBuilder][] = [
     (generate, document) => {
       const celId = generate(fc.uuid);
       // Usually target an image layer and a frame where that layer has no cel yet.
-      const imageLayerIds = Object.values(document.layers)
-        .filter((layer) => layer.kind === "image")
+      const cellLayers = Object.values(document.layers).filter((layer) => layer.kind !== "group");
+      const tilemapLayerIds = cellLayers
+        .filter((layer) => layer.kind === "tilemap")
         .map((layer) => layer.id);
+      // Favour tilemap layers when there are any, so tilemap cels get exercised.
+      const imageLayerIds =
+        tilemapLayerIds.length > 0 && generate(fc.boolean)
+          ? tilemapLayerIds
+          : cellLayers.map((layer) => layer.id);
       const layerId = likely(generate, imageLayerIds)
         ? generate(fc.constantFrom, ...imageLayerIds)
         : existingOrNewId(generate, Object.keys(document.layers));
@@ -177,7 +190,7 @@ const operationBuilders: [weight: number, build: OperationBuilder][] = [
           x: generate(fc.integer, { min: -4, max: 4 }),
           y: generate(fc.integer, { min: -4, max: 4 }),
           opacity: generate(fc.integer, { min: 0, max: 255 }),
-          image: drawImage(generate, document),
+          image: drawCelImage(generate, document, document.layers[layerId]),
           provenance: { origin: "human" },
         },
       };
@@ -200,18 +213,24 @@ const operationBuilders: [weight: number, build: OperationBuilder][] = [
   ],
   [
     3,
-    (generate, document) => ({
-      type: "setCelData",
-      celDataId: existingOrNewId(generate, Object.keys(document.celData)),
-      x: maybe(generate, () => generate(fc.integer, { min: -4, max: 4 })),
-      y: maybe(generate, () => generate(fc.integer, { min: -4, max: 4 })),
-      opacity: maybe(generate, () => generate(fc.integer, { min: 0, max: 255 })),
-      image: maybe(generate, () => drawImage(generate, document)),
-      provenance: maybe(generate, () => ({
-        origin: generate(fc.constantFrom, "human", "algorithmic", "generated-edited"),
-      })),
-      userData: drawRemovableUserData(generate),
-    }),
+    (generate, document) => {
+      const celDataId = existingOrNewId(generate, Object.keys(document.celData));
+      const user = Object.values(document.cels).find((cel) => cel.celDataId === celDataId);
+      return {
+        type: "setCelData",
+        celDataId,
+        x: maybe(generate, () => generate(fc.integer, { min: -4, max: 4 })),
+        y: maybe(generate, () => generate(fc.integer, { min: -4, max: 4 })),
+        opacity: maybe(generate, () => generate(fc.integer, { min: 0, max: 255 })),
+        image: maybe(generate, () =>
+          drawCelImage(generate, document, user && document.layers[user.layerId]),
+        ),
+        provenance: maybe(generate, () => ({
+          origin: generate(fc.constantFrom, "human", "algorithmic", "generated-edited"),
+        })),
+        userData: drawRemovableUserData(generate),
+      };
+    },
   ],
   [
     4,
@@ -224,6 +243,13 @@ const operationBuilders: [weight: number, build: OperationBuilder][] = [
       const width = generate(fc.integer, { min: 1, max: Math.max(1, image.width - x + 1) });
       const height = generate(fc.integer, { min: 1, max: Math.max(1, image.height - y + 1) });
       const length = pixelByteLength(image.format, width, height);
+      // Tilemap patches hold tile references; random bytes would almost never be valid.
+      const user = Object.values(document.cels).find((cel) => cel.celDataId === celDataId);
+      const layer = user && document.layers[user.layerId];
+      const pixels =
+        image.format === "tile32"
+          ? drawTileReferences(generate, document, layer, width * height)
+          : generate(fc.uint8Array, { minLength: length, maxLength: length });
       return {
         type: "patchCelPixels",
         celDataId,
@@ -231,7 +257,7 @@ const operationBuilders: [weight: number, build: OperationBuilder][] = [
         y,
         width,
         height,
-        pixels: generate(fc.uint8Array, { minLength: length, maxLength: length }),
+        pixels,
         provenance: maybe(generate, () => ({ origin: "human" as const })),
       };
     },
@@ -331,7 +357,155 @@ const operationBuilders: [weight: number, build: OperationBuilder][] = [
       userData: drawRemovableUserData(generate),
     }),
   ],
+  [
+    3,
+    (generate, document) => ({
+      type: "setFramePalette",
+      frameId: existingOrNewId(generate, frameIds(document)),
+      palette: generate(fc.boolean) ? null : drawPalette(generate),
+    }),
+  ],
+  [
+    2,
+    (generate, document) => {
+      const tileWidth = generate(fc.integer, { min: 1, max: 3 });
+      const tileHeight = generate(fc.boolean)
+        ? tileWidth
+        : generate(fc.integer, { min: 1, max: 3 });
+      const tileCount = generate(fc.integer, { min: 0, max: 3 });
+      return {
+        type: "addTileset",
+        tileset: {
+          id: generate(fc.uuid),
+          name: generate(fc.string, { maxLength: 8 }),
+          tileWidth,
+          tileHeight,
+          baseIndex: 1,
+          tiles: [
+            { image: blankImage(document, tileWidth, tileHeight) },
+            ...Array.from({ length: tileCount }, () => ({
+              image: drawImage(generate, document, tileWidth, tileHeight),
+            })),
+          ],
+        },
+        index: generate(fc.integer, { min: 0, max: document.tilesets.length + 1 }),
+      };
+    },
+  ],
+  [
+    1,
+    (generate, document) => ({
+      type: "removeTileset",
+      tilesetId: existingOrNewId(generate, tilesetIds(document)),
+    }),
+  ],
+  [
+    1,
+    (generate, document) => ({
+      type: "setTilesetProperties",
+      tilesetId: existingOrNewId(generate, tilesetIds(document)),
+      name: maybe(generate, () => generate(fc.string, { maxLength: 8 })),
+      baseIndex: maybe(generate, () => generate(fc.integer, { min: 0, max: 1 })),
+      userData: drawRemovableUserData(generate),
+    }),
+  ],
+  [
+    2,
+    (generate, document) => {
+      const tilesetId = existingOrNewId(generate, tilesetIds(document));
+      const tileset = document.tilesets.find((each) => each.id === tilesetId);
+      return {
+        type: "appendTile",
+        tilesetId,
+        tile: {
+          image: drawImage(generate, document, tileset?.tileWidth ?? 2, tileset?.tileHeight ?? 2),
+        },
+      };
+    },
+  ],
+  [
+    1,
+    (generate, document) => ({
+      type: "removeLastTile",
+      tilesetId: existingOrNewId(generate, tilesetIds(document)),
+    }),
+  ],
+  [
+    2,
+    (generate, document) => {
+      const tilesetId = existingOrNewId(generate, tilesetIds(document));
+      const tileset = document.tilesets.find((each) => each.id === tilesetId);
+      return {
+        type: "setTile",
+        tilesetId,
+        tileIndex: generate(fc.integer, { min: 0, max: tileset?.tiles.length ?? 1 }),
+        image: maybe(generate, () =>
+          drawImage(generate, document, tileset?.tileWidth ?? 2, tileset?.tileHeight ?? 2),
+        ),
+        userData: drawRemovableUserData(generate),
+      };
+    },
+  ],
 ];
+
+function tilesetIds(document: SpriteDocument): string[] {
+  return document.tilesets.map((tileset) => tileset.id);
+}
+
+function drawPalette(generate: Generate) {
+  return {
+    entries: Array.from({ length: generate(fc.integer, { min: 1, max: 6 }) }, () => ({
+      color: generate(fc.integer, { min: 0, max: 0xff_ff_ff_ff }),
+    })),
+  };
+}
+
+/** An image for a cel on the given layer: tile references on tilemap layers, pixels otherwise. */
+function drawCelImage(
+  generate: Generate,
+  document: SpriteDocument,
+  layer: Layer | undefined,
+): PixelImage {
+  if (layer?.kind !== "tilemap") {
+    return drawImage(generate, document);
+  }
+  const width = generate(fc.integer, { min: 1, max: 3 });
+  const height = generate(fc.integer, { min: 1, max: 3 });
+  const pixels = drawTileReferences(generate, document, layer, width * height);
+  return { width, height, format: "tile32", pixels };
+}
+
+/** Tile references with random flips: usually all valid, sometimes one past the tileset's end. */
+function drawTileReferences(
+  generate: Generate,
+  document: SpriteDocument,
+  layer: Layer | undefined,
+  cells: number,
+): Uint8Array {
+  const tilesetId = layer?.kind === "tilemap" ? layer.tilesetId : undefined;
+  const tileCount =
+    document.tilesets.find((tileset) => tileset.id === tilesetId)?.tiles.length ?? 1;
+  const highest = generate(fc.integer, { min: 0, max: 9 }) < 9 ? tileCount - 1 : tileCount;
+  const pixels = new Uint8Array(cells * 4);
+  for (let cell = 0; cell < cells; cell++) {
+    const index = generate(fc.integer, { min: 0, max: highest });
+    const flips = generate(
+      fc.constantFrom,
+      0,
+      tileFlipHorizontal,
+      tileFlipVertical,
+      tileFlipDiagonal,
+      tileFlipHorizontal | tileFlipVertical | tileFlipDiagonal,
+    );
+    writeTile(pixels, cell, (index | flips) >>> 0);
+  }
+  return pixels;
+}
+
+function blankImage(document: SpriteDocument, width: number, height: number): PixelImage {
+  const format = pixelFormatForColorMode(document.colorMode);
+  return { width, height, format, pixels: new Uint8Array(pixelByteLength(format, width, height)) };
+}
 
 function maybe<T>(generate: Generate, draw: () => T): T | undefined {
   return generate(fc.boolean) ? draw() : undefined;
@@ -371,7 +545,7 @@ function siblingCount(document: SpriteDocument, parentId: string | null): number
   return parent?.kind === "group" ? parent.childIds.length : 0;
 }
 
-function drawNewLayer(generate: Generate): Layer {
+function drawNewLayer(generate: Generate, document: SpriteDocument): Layer {
   const common = {
     id: generate(fc.uuid),
     name: generate(fc.string, { maxLength: 8 }),
@@ -380,15 +554,27 @@ function drawNewLayer(generate: Generate): Layer {
     opacity: generate(fc.integer, { min: 0, max: 255 }),
     blendMode: "normal" as const,
   };
-  return generate(fc.boolean)
-    ? { ...common, kind: "image", reference: generate(fc.boolean) }
-    : { ...common, kind: "group", childIds: [], collapsed: generate(fc.boolean) };
+  // Once a tileset exists, favour tilemap layers so tilemaps get exercised.
+  const kind =
+    document.tilesets.length > 0 && generate(fc.boolean)
+      ? "tilemap"
+      : generate(fc.constantFrom, "image", "group", "tilemap");
+  if (kind === "tilemap") {
+    // Usually an existing tileset; sometimes a missing one, which is rejected.
+    return { ...common, kind, tilesetId: existingOrNewId(generate, tilesetIds(document)) };
+  }
+  return kind === "image"
+    ? { ...common, kind, reference: generate(fc.boolean) }
+    : { ...common, kind, childIds: [], collapsed: generate(fc.boolean) };
 }
 
 /** A small image, usually in the document's pixel format and occasionally in the wrong one. */
-function drawImage(generate: Generate, document: SpriteDocument): PixelImage {
-  const width = generate(fc.integer, { min: 1, max: 4 });
-  const height = generate(fc.integer, { min: 1, max: 4 });
+function drawImage(
+  generate: Generate,
+  document: SpriteDocument,
+  width = generate(fc.integer, { min: 1, max: 4 }),
+  height = generate(fc.integer, { min: 1, max: 4 }),
+): PixelImage {
   const expectedFormat = pixelFormatForColorMode(document.colorMode);
   const format =
     generate(fc.integer, { min: 0, max: 9 }) < 9 ? expectedFormat : otherFormat(expectedFormat);
@@ -398,7 +584,7 @@ function drawImage(generate: Generate, document: SpriteDocument): PixelImage {
 }
 
 function otherFormat(format: PixelImage["format"]): PixelImage["format"] {
-  return format === "rgba8" ? "indexed8" : "rgba8";
+  return format === "rgba8" ? "graya8" : "rgba8";
 }
 
 function drawRemovableUserData(generate: Generate): UserData | null | undefined {

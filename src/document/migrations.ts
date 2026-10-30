@@ -12,7 +12,11 @@ type StoredJson = Record<string, unknown>;
 export type DocumentMigration = (document: StoredJson) => StoredJson;
 
 /** Migrations keyed by the schema version they upgrade from. Version 1 is the first. */
-export const documentMigrations: ReadonlyMap<number, DocumentMigration> = new Map();
+export const documentMigrations: ReadonlyMap<number, DocumentMigration> = new Map([
+  // Version 2 added grayscale, tilesets and tilemap layers, and per-frame palettes. Version 1
+  // documents have none of these, so they gain empty lists.
+  [1, (document) => ({ ...document, schemaVersion: 2, paletteChanges: [], tilesets: [] })],
+]);
 
 /** Brings a stored document up to the target schema version, one migration at a time. */
 export function migrateStoredDocument(

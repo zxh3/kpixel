@@ -4,10 +4,10 @@ import { describe, expect, test } from "vitest";
 import type { SpriteDocument } from "./schema";
 import type { Actor } from "./transaction";
 
-import { createDocument } from "./create-document";
 import { DocumentInvariantError, OperationError } from "./errors";
 import { findDocumentProblems } from "./invariants";
 import { DocumentSession } from "./session";
+import { startingDocument } from "./test-support/random-documents";
 import { drawOperations } from "./test-support/random-operations";
 import {
   decodeDocument,
@@ -22,8 +22,8 @@ import {
 const actor: Actor = { kind: "user", id: "test-user" };
 
 const documentArbitrary = fc
-  .constantFrom("rgba" as const, "indexed" as const)
-  .map((colorMode) => createDocument({ width: 8, height: 8, colorMode }));
+  .tuple(fc.constantFrom("rgba" as const, "indexed" as const, "grayscale" as const), fc.boolean())
+  .map(([colorMode, withTilemap]) => startingDocument(colorMode, withTilemap));
 
 interface EditRun {
   session: DocumentSession;

@@ -2,13 +2,13 @@ import { decode, encode, hasPngSignature } from "fast-png";
 
 import type { FrameId } from "../ids";
 import type { RenderFrameOptions } from "../render-frame";
-import type { PaletteEntry, SpriteDocument } from "../schema";
+import type { Palette, PaletteEntry, SpriteDocument } from "../schema";
 
 import { createDocument } from "../create-document";
 import { FileFormatError } from "../errors";
 import { createId } from "../ids";
 import { copyRegion, findContentBounds, packRgba, pixelFormatForColorMode } from "../pixels";
-import { renderFrame } from "../render-frame";
+import { paletteAt, renderFrame } from "../render-frame";
 import { applyOperations } from "../transaction";
 import { createChunk, insertChunkAfter, readPngSize } from "./png-chunks";
 
@@ -175,9 +175,9 @@ export interface ExportPngOptions extends RenderFrameOptions {
 }
 
 /**
- * Exports one frame as a PNG. Indexed documents produce an indexed PNG with their palette when
- * every flattened colour is a palette entry (blend modes and opacity can create new colours);
- * otherwise, and for RGBA documents, the PNG is RGBA.
+ * Exports one frame as a PNG. Indexed documents produce an indexed PNG with the frame's palette
+ * when every flattened colour is a palette entry (blend modes and opacity can create new
+ * colours), and grayscale documents a grey-and-alpha PNG; otherwise the PNG is RGBA.
  */
 export function exportFramePng(
   document: SpriteDocument,
@@ -193,14 +193,23 @@ export function exportFramePng(
   const height = document.height * scale;
 
   if (document.colorMode === "indexed") {
-    const indexes = toPaletteIndexes(rgba, document);
+    const palette = paletteAt(document, frameId);
+    const indexes = toPaletteIndexes(rgba, document, palette);
     if (indexes) {
       return encodeIndexedPng(
         width,
         height,
         upscale(indexes, 1, document.width, document.height, scale),
         document,
+        palette,
       );
+    }
+  }
+  if (document.colorMode === "grayscale") {
+    const greyAlpha = toGreyAlpha(rgba);
+    if (greyAlpha) {
+      const data = upscale(greyAlpha, 2, document.width, document.height, scale);
+      return encode({ width, height, data, depth: 8, channels: 2 });
     }
   }
   return encode({
@@ -212,10 +221,26 @@ export function exportFramePng(
   });
 }
 
+/** Grey and alpha for each pixel, or undefined if any pixel isn't grey. */
+function toGreyAlpha(rgba: Uint8Array): Uint8Array | undefined {
+  const greyAlpha = new Uint8Array(rgba.length / 2);
+  for (let pixel = 0; pixel < rgba.length / 4; pixel++) {
+    const [red, green, blue, alpha] = rgba.subarray(pixel * 4, pixel * 4 + 4);
+    if (red !== green || green !== blue) return undefined;
+    greyAlpha[pixel * 2] = red!;
+    greyAlpha[pixel * 2 + 1] = alpha!;
+  }
+  return greyAlpha;
+}
+
 /** Maps flattened RGBA pixels back to palette indexes, or undefined if any colour isn't in the palette. */
-function toPaletteIndexes(rgba: Uint8Array, document: SpriteDocument): Uint8Array | undefined {
+function toPaletteIndexes(
+  rgba: Uint8Array,
+  document: SpriteDocument,
+  palette: Palette,
+): Uint8Array | undefined {
   const indexByColor = new Map<number, number>();
-  for (const [index, entry] of document.palette.entries.entries()) {
+  for (const [index, entry] of palette.entries.entries()) {
     if (index !== document.transparentIndex && !indexByColor.has(entry.color)) {
       indexByColor.set(entry.color, index);
     }
@@ -243,9 +268,10 @@ function encodeIndexedPng(
   height: number,
   indexes: Uint8Array,
   document: SpriteDocument,
+  palette: Palette,
 ): Uint8Array {
-  const { entries } = document.palette;
-  const palette = entries.map(({ color }) => [
+  const { entries } = palette;
+  const rgb = entries.map(({ color }) => [
     color >>> 24,
     (color >>> 16) & 0xff,
     (color >>> 8) & 0xff,
@@ -253,7 +279,7 @@ function encodeIndexedPng(
   const alphas = entries.map(({ color }, index) =>
     index === document.transparentIndex ? 0 : color & 0xff,
   );
-  const png = encode({ width, height, data: indexes, depth: 8, channels: 1, palette });
+  const png = encode({ width, height, data: indexes, depth: 8, channels: 1, palette: rgb });
   // fast-png doesn't write palette transparency, so add the tRNS chunk ourselves. It must follow PLTE.
   if (alphas.every((alpha) => alpha === 255)) {
     return png;

@@ -53,5 +53,7 @@ export function createDocument(options: CreateDocumentOptions): SpriteDocument {
     tags: [],
     slices: [],
     palette: options.palette ?? defaultPalette,
+    paletteChanges: [],
+    tilesets: [],
   };
 }

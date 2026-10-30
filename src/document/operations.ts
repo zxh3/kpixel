@@ -16,6 +16,8 @@ import {
   SliceKeySchema,
   SliceSchema,
   TagSchema,
+  TileSchema,
+  TilesetSchema,
   UserDataSchema,
 } from "./schema";
 
@@ -45,6 +47,13 @@ export const SetSpritePropertiesSchema = Type.Object({
 export const SetPaletteSchema = Type.Object({
   type: Type.Literal("setPalette"),
   palette: PaletteSchema,
+});
+
+/** Sets the palette that takes over at a frame, or removes it with null. Not on the first frame. */
+export const SetFramePaletteSchema = Type.Object({
+  type: Type.Literal("setFramePalette"),
+  frameId: EntityIdSchema,
+  palette: Type.Union([PaletteSchema, Type.Null()]),
 });
 
 export const AddFrameSchema = Type.Object({
@@ -200,9 +209,55 @@ export const SetSlicePropertiesSchema = Type.Object({
   userData: Type.Optional(RemovableUserDataSchema),
 });
 
+export const AddTilesetSchema = Type.Object({
+  type: Type.Literal("addTileset"),
+  tileset: TilesetSchema,
+  index: IndexSchema,
+});
+
+export const RemoveTilesetSchema = Type.Object({
+  type: Type.Literal("removeTileset"),
+  /** Only when no tilemap layer uses it. */
+  tilesetId: EntityIdSchema,
+});
+
+export const SetTilesetPropertiesSchema = Type.Object({
+  type: Type.Literal("setTilesetProperties"),
+  tilesetId: EntityIdSchema,
+  name: Type.Optional(Type.String()),
+  baseIndex: Type.Optional(Type.Integer({ minimum: -32_768, maximum: 32_767 })),
+  userData: Type.Optional(RemovableUserDataSchema),
+});
+
+/**
+ * Adds a tile at the end of a tileset. Tiles are only ever added and removed at the end, so the
+ * indexes tilemaps refer to never shift.
+ */
+export const AppendTileSchema = Type.Object({
+  type: Type.Literal("appendTile"),
+  tilesetId: EntityIdSchema,
+  tile: TileSchema,
+});
+
+export const RemoveLastTileSchema = Type.Object({
+  type: Type.Literal("removeLastTile"),
+  /** Only when no tilemap cel uses the last tile, and never the empty tile 0. */
+  tilesetId: EntityIdSchema,
+});
+
+export const SetTileSchema = Type.Object({
+  type: Type.Literal("setTile"),
+  tilesetId: EntityIdSchema,
+  tileIndex: Type.Integer({ minimum: 0 }),
+  /** Replaces the tile's image; not allowed for the empty tile 0. */
+  image: Type.Optional(PixelImageSchema),
+  userData: Type.Optional(RemovableUserDataSchema),
+});
+
 export const OperationSchema = Type.Union([
   SetSpritePropertiesSchema,
   SetPaletteSchema,
+  SetFramePaletteSchema,
   AddFrameSchema,
   RemoveFrameSchema,
   MoveFrameSchema,
@@ -222,6 +277,12 @@ export const OperationSchema = Type.Union([
   AddSliceSchema,
   RemoveSliceSchema,
   SetSlicePropertiesSchema,
+  AddTilesetSchema,
+  RemoveTilesetSchema,
+  SetTilesetPropertiesSchema,
+  AppendTileSchema,
+  RemoveLastTileSchema,
+  SetTileSchema,
 ]);
 
 export type Operation = StaticDecode<typeof OperationSchema>;

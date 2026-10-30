@@ -1,12 +1,14 @@
 import { describe, expect, test } from "vitest";
 
 import type { Operation } from "./operations";
-import type { GroupLayer, SpriteDocument } from "./schema";
+import type { GroupLayer, PixelImage, SpriteDocument } from "./schema";
 
 import { applyOperation } from "./apply-operation";
 import { createDocument } from "./create-document";
-import { OperationError } from "./errors";
+import { DocumentInvariantError, OperationError } from "./errors";
 import { createId } from "./ids";
+import { tileFlipHorizontal, writeTile } from "./pixels";
+import { paletteAt } from "./render-frame";
 import {
   blankImage,
   firstFrameId,
@@ -14,6 +16,7 @@ import {
   newCelData,
   newImageLayer,
 } from "./test-support/builders";
+import { startingDocument } from "./test-support/random-documents";
 import { applyOperations } from "./transaction";
 
 function apply(document: SpriteDocument, ...operations: Operation[]): SpriteDocument {
@@ -195,7 +198,7 @@ describe("cels", () => {
         },
         celData,
       }),
-    ).toThrow(/image layers/);
+    ).toThrow(/groups can.t hold cels/);
   });
 
   test("a layer holds at most one cel per frame", () => {
@@ -331,6 +334,257 @@ describe("pixel patches", () => {
     );
     expect(() => applyOperation(document, { ...base, x: 0, pixels: new Uint8Array(2) })).toThrow(
       /expected 8/,
+    );
+  });
+});
+
+/** A document with a tileset of 2×2 tiles (empty, fill 1, fill 255) and a tilemap layer. */
+function documentWithTilemap() {
+  const document = startingDocument("rgba", true);
+  const tileset = document.tilesets[0]!;
+  const layer = Object.values(document.layers).find((each) => each.kind === "tilemap")!;
+  return { document, tileset, layer };
+}
+
+function tileImage(fill: number): PixelImage {
+  return { width: 2, height: 2, format: "rgba8", pixels: new Uint8Array(16).fill(fill) };
+}
+
+/** A tilemap cel of one row of tile references. */
+function tilemapCel(document: SpriteDocument, layerId: string, references: number[]) {
+  const pixels = new Uint8Array(references.length * 4);
+  references.forEach((reference, cell) => writeTile(pixels, cell, reference));
+  const celData = {
+    ...newCelData(document),
+    image: { width: references.length, height: 1, format: "tile32" as const, pixels },
+  };
+  const cel = {
+    id: createId(),
+    layerId,
+    frameId: firstFrameId(document),
+    celDataId: celData.id,
+    zIndex: 0,
+  };
+  return { type: "addCel" as const, cel, celData };
+}
+
+function documentWithTwoFrames() {
+  const document = createDocument({ width: 4, height: 4, colorMode: "indexed" });
+  const frame = { id: createId(), durationMs: 100 };
+  return { document: apply(document, { type: "addFrame", frame, index: 1 }), frame };
+}
+
+describe("per-frame palettes", () => {
+  const red = { entries: [{ color: 0xff_00_00_ff }] };
+
+  test("setFramePalette changes the palette from its frame on, and undoes", () => {
+    const { document, frame } = documentWithTwoFrames();
+    const { document: next, inverse } = applyOperation(document, {
+      type: "setFramePalette",
+      frameId: frame.id,
+      palette: red,
+    });
+    expect(paletteAt(next, firstFrameId(next))).toEqual(document.palette);
+    expect(paletteAt(next, frame.id)).toEqual(red);
+    expect(applyOperations(next, inverse).document).toStrictEqual(document);
+
+    const cleared = applyOperation(next, {
+      type: "setFramePalette",
+      frameId: frame.id,
+      palette: null,
+    });
+    expect(cleared.document.paletteChanges).toEqual([]);
+    expect(applyOperations(cleared.document, cleared.inverse).document).toStrictEqual(next);
+  });
+
+  test("the first frame always uses the document palette", () => {
+    const { document } = documentWithTwoFrames();
+    expect(() =>
+      applyOperation(document, {
+        type: "setFramePalette",
+        frameId: firstFrameId(document),
+        palette: red,
+      }),
+    ).toThrow(/use setPalette/);
+  });
+
+  test("a frame with a palette change can't be removed", () => {
+    const { document, frame } = documentWithTwoFrames();
+    const next = apply(document, { type: "setFramePalette", frameId: frame.id, palette: red });
+    expect(() => applyOperation(next, { type: "removeFrame", frameId: frame.id })).toThrow(
+      /still has a palette change/,
+    );
+  });
+});
+
+describe("tilesets", () => {
+  test("addTileset and removeTileset undo each other", () => {
+    const document = createDocument({ width: 8, height: 8 });
+    const tileset = {
+      id: createId(),
+      name: "tiles",
+      tileWidth: 2,
+      tileHeight: 2,
+      baseIndex: 1,
+      tiles: [{ image: tileImage(0) }],
+    };
+    const { document: next, inverse } = applyOperation(document, {
+      type: "addTileset",
+      tileset,
+      index: 0,
+    });
+    expect(next.tilesets).toEqual([tileset]);
+    expect(applyOperations(next, inverse).document).toStrictEqual(document);
+  });
+
+  test("a tileset used by a tilemap layer can't be removed", () => {
+    const { document, tileset } = documentWithTilemap();
+    expect(() =>
+      applyOperation(document, { type: "removeTileset", tilesetId: tileset.id }),
+    ).toThrow(/still used by a tilemap layer/);
+  });
+
+  test("tiles must be the tileset's size and the document's format", () => {
+    const { document, tileset } = documentWithTilemap();
+    const append = { type: "appendTile" as const, tilesetId: tileset.id };
+    expect(() =>
+      applyOperation(document, { ...append, tile: { image: blankImage(document, 3, 2) } }),
+    ).toThrow(/must be 2×2/);
+    expect(() =>
+      applyOperation(document, {
+        ...append,
+        tile: { image: { ...tileImage(0), format: "graya8", pixels: new Uint8Array(8) } },
+      }),
+    ).toThrow(/doesn't match rgba color mode/);
+  });
+
+  test("appendTile adds at the end and undoes by removing the last tile", () => {
+    const { document, tileset } = documentWithTilemap();
+    const tile = { image: tileImage(7), userData: { text: "new" } };
+    const { document: next, inverse } = applyOperation(document, {
+      type: "appendTile",
+      tilesetId: tileset.id,
+      tile,
+    });
+    expect(next.tilesets[0]!.tiles.at(-1)).toEqual(tile);
+    expect(inverse).toEqual([{ type: "removeLastTile", tilesetId: tileset.id }]);
+    expect(applyOperations(next, inverse).document).toStrictEqual(document);
+  });
+
+  test("removeLastTile undoes, keeps the empty tile, and can't strand a tilemap", () => {
+    const { document, tileset, layer } = documentWithTilemap();
+    const { document: next, inverse } = applyOperation(document, {
+      type: "removeLastTile",
+      tilesetId: tileset.id,
+    });
+    expect(next.tilesets[0]!.tiles).toHaveLength(2);
+    expect(applyOperations(next, inverse).document).toStrictEqual(document);
+
+    const onlyEmpty = apply(next, { type: "removeLastTile", tilesetId: tileset.id });
+    expect(() =>
+      applyOperation(onlyEmpty, { type: "removeLastTile", tilesetId: tileset.id }),
+    ).toThrow(/tile 0 is the empty tile/);
+
+    const usesLastTile = apply(
+      document,
+      tilemapCel(document, layer.id, [1, 2 | tileFlipHorizontal]),
+    );
+    expect(() => apply(usesLastTile, { type: "removeLastTile", tilesetId: tileset.id })).toThrow(
+      DocumentInvariantError,
+    );
+  });
+
+  test("a reference added before its tile undoes cleanly", () => {
+    const { document, tileset, layer } = documentWithTilemap();
+    const { document: next, inverse } = applyOperations(document, [
+      tilemapCel(document, layer.id, [3]),
+      { type: "appendTile", tilesetId: tileset.id, tile: { image: tileImage(5) } },
+    ]);
+    expect(applyOperations(next, inverse).document).toStrictEqual(document);
+  });
+
+  test("setTile redraws a tile and undoes, but never draws on tile 0", () => {
+    const { document, tileset } = documentWithTilemap();
+    const { document: next, inverse } = applyOperation(document, {
+      type: "setTile",
+      tilesetId: tileset.id,
+      tileIndex: 1,
+      image: tileImage(42),
+      userData: { text: "redrawn" },
+    });
+    expect(next.tilesets[0]!.tiles[1]).toEqual({
+      image: tileImage(42),
+      userData: { text: "redrawn" },
+    });
+    expect(applyOperations(next, inverse).document).toStrictEqual(document);
+
+    const setTile = { type: "setTile" as const, tilesetId: tileset.id };
+    expect(() =>
+      applyOperation(document, { ...setTile, tileIndex: 0, image: tileImage(255) }),
+    ).toThrow(/can't be drawn on/);
+    expect(() => applyOperation(document, { ...setTile, tileIndex: 3 })).toThrow(/has no tile 3/);
+  });
+
+  test("tile 0 can be refilled when the transparent index changes", () => {
+    const document = startingDocument("indexed", true);
+    const tilesetId = document.tilesets[0]!.id;
+    const palette = { entries: [{ color: 0 }, { color: 0xff_ff_ff_ff }] };
+    const withPalette = apply(document, { type: "setPalette", palette });
+    const empty = { width: 2, height: 2, format: "indexed8" as const, pixels: new Uint8Array(4) };
+
+    const moveTransparentIndex = {
+      type: "setSpriteProperties" as const,
+      transparentIndex: 1,
+    };
+    expect(() => apply(withPalette, moveTransparentIndex)).toThrow(DocumentInvariantError);
+    const next = apply(withPalette, moveTransparentIndex, {
+      type: "setTile",
+      tilesetId,
+      tileIndex: 0,
+      image: { ...empty, pixels: new Uint8Array(4).fill(1) },
+    });
+    expect(next.transparentIndex).toBe(1);
+  });
+
+  test("setTilesetProperties undoes", () => {
+    const { document, tileset } = documentWithTilemap();
+    const { document: next, inverse } = applyOperation(document, {
+      type: "setTilesetProperties",
+      tilesetId: tileset.id,
+      name: "terrain",
+      baseIndex: 0,
+    });
+    expect(next.tilesets[0]).toMatchObject({ name: "terrain", baseIndex: 0 });
+    expect(applyOperations(next, inverse).document).toStrictEqual(document);
+  });
+});
+
+describe("tilemap layers and cels", () => {
+  test("a tilemap layer needs an existing tileset", () => {
+    const document = createDocument({ width: 8, height: 8 });
+    const layer = { ...newImageLayer(), kind: "tilemap" as const, tilesetId: createId() };
+    const { reference: _reference, ...tilemapLayer } = layer;
+    expect(() =>
+      applyOperation(document, { type: "addLayer", layer: tilemapLayer, parentId: null, index: 0 }),
+    ).toThrow(/tileset .* doesn't exist/);
+  });
+
+  test("tilemap cels hold tile references, not pixels", () => {
+    const { document, layer } = documentWithTilemap();
+    const addCel = tilemapCel(document, layer.id, [1]);
+    expect(() =>
+      applyOperation(document, {
+        ...addCel,
+        celData: { ...addCel.celData, image: blankImage(document) },
+      }),
+    ).toThrow(/tilemap cels hold tile32 images, not rgba8/);
+    expect(() => apply(document, addCel)).not.toThrow();
+  });
+
+  test("references to tiles past the end of the tileset are rejected", () => {
+    const { document, layer } = documentWithTilemap();
+    expect(() => apply(document, tilemapCel(document, layer.id, [3]))).toThrow(
+      DocumentInvariantError,
     );
   });
 });

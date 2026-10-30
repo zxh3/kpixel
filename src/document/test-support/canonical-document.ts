@@ -33,9 +33,21 @@ export function canonicalDocument(document: SpriteDocument): SpriteDocument {
     if (!celDataName.has(cel.celDataId)) celDataName.set(cel.celDataId, `data of ${celName(cel)}`);
   }
 
+  const tilesetName = new Map(
+    document.tilesets.map((tileset, index) => [tileset.id, `tileset ${index}`]),
+  );
+
   return {
     ...document,
     id: "document",
+    // Palette changes have no meaningful order, so sort them by frame.
+    paletteChanges: document.paletteChanges
+      .map((change) => ({ ...change, frameId: rename(frameName, change.frameId) }))
+      .toSorted((a, b) => a.frameId.localeCompare(b.frameId, undefined, { numeric: true })),
+    tilesets: document.tilesets.map((tileset) => ({
+      ...tileset,
+      id: rename(tilesetName, tileset.id),
+    })),
     frames: document.frames.map((frame) => ({ ...frame, id: rename(frameName, frame.id) })),
     layers: Object.fromEntries(
       Object.values(document.layers).map((layer) => {
@@ -47,7 +59,9 @@ export function canonicalDocument(document: SpriteDocument): SpriteDocument {
                 id,
                 childIds: layer.childIds.map((childId) => rename(layerName, childId)),
               }
-            : { ...layer, id };
+            : layer.kind === "tilemap"
+              ? { ...layer, id, tilesetId: rename(tilesetName, layer.tilesetId) }
+              : { ...layer, id };
         return [id, renamed];
       }),
     ),

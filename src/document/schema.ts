@@ -7,7 +7,7 @@ import { decodeBase64, encodeBase64 } from "./pixels";
 // the in-memory types. The only difference between the two is pixel data: base64 on the wire,
 // Uint8Array in memory.
 
-export const DOCUMENT_SCHEMA_VERSION = 1;
+export const DOCUMENT_SCHEMA_VERSION = 2;
 
 export const maxCanvasSize = 65_535;
 export const maxPaletteSize = 256;
@@ -34,8 +34,22 @@ export const UserDataSchema = Type.Object({
   properties: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 });
 
-export const ColorModeSchema = Type.Union([Type.Literal("rgba"), Type.Literal("indexed")]);
-export const PixelFormatSchema = Type.Union([Type.Literal("rgba8"), Type.Literal("indexed8")]);
+export const ColorModeSchema = Type.Union([
+  Type.Literal("rgba"),
+  Type.Literal("indexed"),
+  Type.Literal("grayscale"),
+]);
+
+/**
+ * How pixels are stored: 4 bytes of RGBA, 1 palette index, 2 bytes of grey and alpha, or, in
+ * tilemap cels, one 32-bit tile reference per grid cell (see `tile32` in pixels.ts).
+ */
+export const PixelFormatSchema = Type.Union([
+  Type.Literal("rgba8"),
+  Type.Literal("indexed8"),
+  Type.Literal("graya8"),
+  Type.Literal("tile32"),
+]);
 
 /** Raw pixel bytes: base64 on the wire, Uint8Array in memory. */
 export const PixelDataSchema = Type.Codec(Type.String({ contentEncoding: "base64" }))
@@ -119,7 +133,14 @@ export const GroupLayerSchema = Type.Object({
   collapsed: Type.Boolean(),
 });
 
-export const LayerSchema = Type.Union([ImageLayerSchema, GroupLayerSchema]);
+/** A layer that arranges tiles from a tileset on a grid. Its cels hold tile32 images. */
+export const TilemapLayerSchema = Type.Object({
+  ...layerCommonProperties,
+  kind: Type.Literal("tilemap"),
+  tilesetId: EntityIdSchema,
+});
+
+export const LayerSchema = Type.Union([ImageLayerSchema, GroupLayerSchema, TilemapLayerSchema]);
 
 /** The content of a layer at one frame. Linked cels share one CelData. */
 export const CelSchema = Type.Object({
@@ -196,6 +217,30 @@ export const PaletteSchema = Type.Object({
   entries: Type.Array(PaletteEntrySchema, { minItems: 1, maxItems: maxPaletteSize }),
 });
 
+/** From its frame on, until the next change, the document uses a different palette. */
+export const PaletteChangeSchema = Type.Object({
+  frameId: EntityIdSchema,
+  palette: PaletteSchema,
+});
+
+export const TileSchema = Type.Object({
+  /** Exactly tileWidth × tileHeight, in the document's pixel format. */
+  image: PixelImageSchema,
+  userData: Type.Optional(UserDataSchema),
+});
+
+/** Tiles shared by tilemap layers. Tile 0 is always the empty tile. */
+export const TilesetSchema = Type.Object({
+  id: EntityIdSchema,
+  name: Type.String(),
+  tileWidth: Type.Integer({ minimum: 1, maximum: maxCanvasSize }),
+  tileHeight: Type.Integer({ minimum: 1, maximum: maxCanvasSize }),
+  tiles: Type.Array(TileSchema, { minItems: 1 }),
+  /** The number shown for tile 1 in the UI; Aseprite shows 1-based tile numbers by default. */
+  baseIndex: Type.Integer({ minimum: -32_768, maximum: 32_767 }),
+  userData: Type.Optional(UserDataSchema),
+});
+
 export const PixelRatioSchema = Type.Object({
   width: Type.Integer({ minimum: 1, maximum: 255 }),
   height: Type.Integer({ minimum: 1, maximum: 255 }),
@@ -219,7 +264,11 @@ export const SpriteDocumentSchema = Type.Object({
   celData: Type.Record(Type.String(), CelDataSchema),
   tags: Type.Array(TagSchema),
   slices: Type.Array(SliceSchema),
+  /** The palette from the first frame on. */
   palette: PaletteSchema,
+  /** Palettes that take over at later frames, in no particular order; at most one per frame. */
+  paletteChanges: Type.Array(PaletteChangeSchema),
+  tilesets: Type.Array(TilesetSchema),
   userData: Type.Optional(UserDataSchema),
 });
 
@@ -234,6 +283,7 @@ export type Frame = StaticDecode<typeof FrameSchema>;
 export type BlendMode = StaticDecode<typeof BlendModeSchema>;
 export type ImageLayer = StaticDecode<typeof ImageLayerSchema>;
 export type GroupLayer = StaticDecode<typeof GroupLayerSchema>;
+export type TilemapLayer = StaticDecode<typeof TilemapLayerSchema>;
 export type Layer = StaticDecode<typeof LayerSchema>;
 export type Cel = StaticDecode<typeof CelSchema>;
 export type CelData = StaticDecode<typeof CelDataSchema>;
@@ -243,6 +293,9 @@ export type SliceKey = StaticDecode<typeof SliceKeySchema>;
 export type Slice = StaticDecode<typeof SliceSchema>;
 export type PaletteEntry = StaticDecode<typeof PaletteEntrySchema>;
 export type Palette = StaticDecode<typeof PaletteSchema>;
+export type PaletteChange = StaticDecode<typeof PaletteChangeSchema>;
+export type Tile = StaticDecode<typeof TileSchema>;
+export type Tileset = StaticDecode<typeof TilesetSchema>;
 export type PixelRatio = StaticDecode<typeof PixelRatioSchema>;
 export type SpriteDocument = StaticDecode<typeof SpriteDocumentSchema>;
 

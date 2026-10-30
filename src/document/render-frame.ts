@@ -1,7 +1,14 @@
 import type { FrameId, LayerId } from "./ids";
-import type { BlendMode, Cel, PixelImage, SpriteDocument } from "./schema";
+import type { BlendMode, Cel, Palette, PixelImage, SpriteDocument, Tileset } from "./schema";
 
 import { blendColors } from "./blend-modes";
+import {
+  readTile,
+  tileFlipDiagonal,
+  tileFlipHorizontal,
+  tileFlipVertical,
+  tileIndexMask,
+} from "./pixels";
 
 export interface RenderFrameOptions {
   /** Reference layers are visible while editing but left out of exports. Defaults to false. */
@@ -30,7 +37,10 @@ export function renderFrame(
       celsByLayer.set(cel.layerId, cel);
     }
   }
-  const paletteColors = document.colorMode === "indexed" ? paletteLookup(document) : undefined;
+  const paletteColors =
+    document.colorMode === "indexed"
+      ? paletteLookup(document, paletteAt(document, frameId))
+      : undefined;
   const { width, height } = document;
 
   const renderLayers = (layerIds: readonly LayerId[]): Uint8Array => {
@@ -69,15 +79,24 @@ export function renderFrame(
         continue;
       }
       const celData = document.celData[cel.celDataId]!;
-      const pixels = paletteColors
-        ? indexedToRgba(celData.image, paletteColors)
-        : celData.image.pixels;
-      const placement = {
+      let pixels: Uint8Array;
+      let placement = {
         x: celData.x,
         y: celData.y,
         width: celData.image.width,
         height: celData.image.height,
       };
+      if (layer.kind === "tilemap") {
+        const tileset = document.tilesets.find((each) => each.id === layer.tilesetId)!;
+        pixels = renderTilemap(celData.image, tileset, paletteColors);
+        placement = {
+          ...placement,
+          width: placement.width * tileset.tileWidth,
+          height: placement.height * tileset.tileHeight,
+        };
+      } else {
+        pixels = imageToRgba(celData.image, paletteColors);
+      }
       const opacity = (layer.opacity / 255) * (celData.opacity / 255);
       composite(canvas, width, height, pixels, placement, opacity, layer.blendMode);
     }
@@ -87,10 +106,25 @@ export function renderFrame(
   return renderLayers(document.rootLayerIds);
 }
 
+/** The palette in force at a frame: the latest palette change at or before it, else the document's. */
+export function paletteAt(document: SpriteDocument, frameId: FrameId): Palette {
+  const frameIndex = document.frames.findIndex((frame) => frame.id === frameId);
+  let palette = document.palette;
+  let changeIndex = 0;
+  for (const change of document.paletteChanges) {
+    const index = document.frames.findIndex((frame) => frame.id === change.frameId);
+    if (index <= frameIndex && index >= changeIndex) {
+      palette = change.palette;
+      changeIndex = index;
+    }
+  }
+  return palette;
+}
+
 /** RGBA for each palette index; the transparent index is fully transparent. */
-function paletteLookup(document: SpriteDocument): Uint8Array {
+function paletteLookup(document: SpriteDocument, palette: Palette): Uint8Array {
   const lookup = new Uint8Array(256 * 4);
-  for (const [index, entry] of document.palette.entries.entries()) {
+  for (const [index, entry] of palette.entries.entries()) {
     if (index !== document.transparentIndex) {
       lookup[index * 4] = entry.color >>> 24;
       lookup[index * 4 + 1] = (entry.color >>> 16) & 0xff;
@@ -101,12 +135,69 @@ function paletteLookup(document: SpriteDocument): Uint8Array {
   return lookup;
 }
 
-/** Converts an indexed image to RGBA. Indexes outside the palette become transparent. */
-export function indexedToRgba(image: PixelImage, paletteColors: Uint8Array): Uint8Array {
-  const rgba = new Uint8Array(image.width * image.height * 4);
-  for (let pixel = 0; pixel < image.pixels.length; pixel++) {
-    const index = image.pixels[pixel]! * 4;
-    rgba.set(paletteColors.subarray(index, index + 4), pixel * 4);
+/**
+ * Converts an image to RGBA. Indexed images need the palette lookup (indexes outside the palette
+ * become transparent); grayscale expands grey to all three channels.
+ */
+export function imageToRgba(image: PixelImage, paletteColors?: Uint8Array): Uint8Array {
+  switch (image.format) {
+    case "rgba8":
+      return image.pixels;
+    case "indexed8": {
+      const rgba = new Uint8Array(image.width * image.height * 4);
+      for (let pixel = 0; pixel < image.pixels.length; pixel++) {
+        const index = image.pixels[pixel]! * 4;
+        rgba.set(paletteColors!.subarray(index, index + 4), pixel * 4);
+      }
+      return rgba;
+    }
+    case "graya8": {
+      const rgba = new Uint8Array(image.width * image.height * 4);
+      for (let pixel = 0; pixel < image.width * image.height; pixel++) {
+        const grey = image.pixels[pixel * 2]!;
+        rgba.set([grey, grey, grey, image.pixels[pixel * 2 + 1]!], pixel * 4);
+      }
+      return rgba;
+    }
+    case "tile32":
+    default:
+      throw new Error("Tilemap images need their tileset; use renderTilemap");
+  }
+}
+
+/**
+ * Draws a tilemap cel (one tile reference per grid cell) as RGBA. Tile 0 is empty. Flips apply
+ * to each tile diagonal first (swapping x and y), then horizontal, then vertical.
+ */
+function renderTilemap(
+  image: PixelImage,
+  tileset: Tileset,
+  paletteColors?: Uint8Array,
+): Uint8Array {
+  const { tileWidth, tileHeight } = tileset;
+  const width = image.width * tileWidth;
+  const rgba = new Uint8Array(width * image.height * tileHeight * 4);
+  const tiles = tileset.tiles.map((tile) => imageToRgba(tile.image, paletteColors));
+  for (let row = 0; row < image.height; row++) {
+    for (let column = 0; column < image.width; column++) {
+      const reference = readTile(image.pixels, row * image.width + column);
+      const tile = tiles[reference & tileIndexMask];
+      if (!tile || (reference & tileIndexMask) === 0) continue;
+      for (let y = 0; y < tileHeight; y++) {
+        for (let x = 0; x < tileWidth; x++) {
+          // Find the source pixel by undoing the flips in reverse order.
+          let u = x;
+          let v = y;
+          if (reference & tileFlipVertical) v = tileHeight - 1 - v;
+          if (reference & tileFlipHorizontal) u = tileWidth - 1 - u;
+          if (reference & tileFlipDiagonal) [u, v] = [v, u];
+          if (u >= tileWidth || v >= tileHeight) continue;
+          const from = (v * tileWidth + u) * 4;
+          const to = ((row * tileHeight + y) * width + column * tileWidth + x) * 4;
+          rgba.set(tile.subarray(from, from + 4), to);
+        }
+      }
+    }
   }
   return rgba;
 }

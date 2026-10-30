@@ -317,6 +317,64 @@ describe("exportFramePng", () => {
     expect(decodePng(exportFramePng(translucent, translucent.frames[0]!.id)).kind).toBe("rgba");
   });
 
+  test("grayscale documents export grey-and-alpha PNGs", () => {
+    let document = createDocument({ width: 2, height: 1, colorMode: "grayscale" });
+    const celDataId = createId();
+    document = applyOperations(document, [
+      {
+        type: "addCel",
+        cel: {
+          id: createId(),
+          layerId: document.rootLayerIds[0]!,
+          frameId: document.frames[0]!.id,
+          celDataId,
+          zIndex: 0,
+        },
+        celData: {
+          id: celDataId,
+          x: 0,
+          y: 0,
+          opacity: 255,
+          image: {
+            width: 2,
+            height: 1,
+            format: "graya8",
+            pixels: Uint8Array.from([80, 255, 9, 100]),
+          },
+          provenance: { origin: "human" },
+        },
+      },
+    ]).document;
+    const png = exportFramePng(document, document.frames[0]!.id);
+    expect(png[25]).toBe(pngColorType.greyAlpha);
+    expect(decodeToRgba(png)).toEqual(Uint8Array.from([80, 80, 80, 255, 9, 9, 9, 100]));
+  });
+
+  test("indexed frames export with the palette in force at that frame", () => {
+    const document = indexedDocument();
+    const frame = { id: createId(), durationMs: 100 };
+    const changed = applyOperations(document, [
+      { type: "addFrame", frame, index: 1 },
+      {
+        type: "addCel",
+        cel: {
+          id: createId(),
+          layerId: document.rootLayerIds[0]!,
+          frameId: frame.id,
+          celDataId: Object.keys(document.celData)[0]!,
+          zIndex: 0,
+        },
+      },
+      {
+        type: "setFramePalette",
+        frameId: frame.id,
+        palette: { entries: [...document.palette.entries, { color: packRgba(0, 255, 0, 255) }] },
+      },
+    ]).document;
+    const raster = decodePng(exportFramePng(changed, frame.id));
+    expect(raster.kind === "indexed" && raster.palette.at(-1)).toBe(packRgba(0, 255, 0, 255));
+  });
+
   test("scale enlarges each pixel into a square block", () => {
     const document = indexedDocument();
     const raster = decodePng(exportFramePng(document, document.frames[0]!.id, { scale: 2 }));

@@ -1,9 +1,16 @@
 import type { EntityId, FrameId, LayerId } from "./ids";
 import type { Operation, OperationOfType, OperationType } from "./operations";
-import type { GroupLayer, Layer, PixelImage, SpriteDocument } from "./schema";
+import type { PixelFormat } from "./pixels";
+import type { GroupLayer, Layer, PixelImage, SpriteDocument, Tileset } from "./schema";
 
 import { OperationError } from "./errors";
-import { copyRegion, pasteRegion, pixelByteLength, pixelFormatForColorMode } from "./pixels";
+import {
+  copyRegion,
+  findContentBounds,
+  pasteRegion,
+  pixelByteLength,
+  pixelFormatForColorMode,
+} from "./pixels";
 
 export interface OperationResult {
   document: SpriteDocument;
@@ -70,6 +77,20 @@ function applyCanonicalOperation(document: SpriteDocument, operation: Operation)
       return removeSlice(document, operation);
     case "setSliceProperties":
       return setSliceProperties(document, operation);
+    case "setFramePalette":
+      return setFramePalette(document, operation);
+    case "addTileset":
+      return addTileset(document, operation);
+    case "removeTileset":
+      return removeTileset(document, operation);
+    case "setTilesetProperties":
+      return setTilesetProperties(document, operation);
+    case "appendTile":
+      return appendTile(document, operation);
+    case "removeLastTile":
+      return removeLastTile(document, operation);
+    case "setTile":
+      return setTile(document, operation);
     default:
       return unreachable(operation);
   }
@@ -107,6 +128,27 @@ function setPalette(
   };
 }
 
+function setFramePalette(
+  document: SpriteDocument,
+  operation: OperationOfType<"setFramePalette">,
+): OperationResult {
+  const { frameId, palette } = operation;
+  if (requireFrameIndex(document, operation, frameId) === 0) {
+    fail(operation, "the first frame uses the document palette; use setPalette");
+  }
+  const index = document.paletteChanges.findIndex((change) => change.frameId === frameId);
+  const previous = index === -1 ? null : document.paletteChanges[index]!.palette;
+  let paletteChanges =
+    index === -1 ? document.paletteChanges : removeAt(document.paletteChanges, index);
+  if (palette) {
+    paletteChanges = [...paletteChanges, { frameId, palette }];
+  }
+  return {
+    document: { ...document, paletteChanges },
+    inverse: [{ type: "setFramePalette", frameId, palette: previous }],
+  };
+}
+
 // Frames
 
 function addFrame(
@@ -141,6 +183,9 @@ function removeFrame(
   }
   if (document.slices.some((slice) => slice.keys.some((key) => key.frameId === frameId))) {
     fail(operation, `frame ${frameId} is still used by a slice key`);
+  }
+  if (document.paletteChanges.some((change) => change.frameId === frameId)) {
+    fail(operation, `frame ${frameId} still has a palette change`);
   }
   const frame = document.frames[index]!;
   return {
@@ -188,6 +233,9 @@ function addLayer(
   }
   if (layer.kind === "group" && layer.childIds.length > 0) {
     fail(operation, "groups must be added empty");
+  }
+  if (layer.kind === "tilemap") {
+    requireTileset(document, operation, layer.tilesetId);
   }
   const siblings = requireChildIds(document, operation, parentId);
   requireInsertIndex(operation, index, siblings.length);
@@ -277,7 +325,7 @@ function setLayerProperties(
       ...commonRevert,
       reference: previousValue(reference, layer.reference),
     };
-  } else {
+  } else if (layer.kind === "group") {
     if (reference !== undefined) {
       fail(operation, "only image layers can be reference layers");
     }
@@ -288,6 +336,12 @@ function setLayerProperties(
       ...commonRevert,
       collapsed: previousValue(collapsed, layer.collapsed),
     };
+  } else {
+    if (reference !== undefined || collapsed !== undefined) {
+      fail(operation, "tilemap layers can't be reference layers or collapsed");
+    }
+    next = withChanges(layer, commonChanges);
+    revert = { type: "setLayerProperties", layerId: layer.id, ...commonRevert };
   }
   return {
     document: { ...document, layers: { ...document.layers, [layer.id]: next } },
@@ -303,8 +357,8 @@ function addCel(document: SpriteDocument, operation: OperationOfType<"addCel">):
     fail(operation, `cel ${cel.id} already exists`);
   }
   const layer = requireLayer(document, operation, cel.layerId);
-  if (layer.kind !== "image") {
-    fail(operation, "cels can only be added to image layers");
+  if (layer.kind === "group") {
+    fail(operation, "groups can't hold cels; add cels to image or tilemap layers");
   }
   requireFrameIndex(document, operation, cel.frameId);
   if (findCel(document, cel.layerId, cel.frameId)) {
@@ -318,7 +372,7 @@ function addCel(document: SpriteDocument, operation: OperationOfType<"addCel">):
     if (document.celData[celData.id]) {
       fail(operation, `cel data ${celData.id} already exists`);
     }
-    requireImageFormat(document, operation, celData.image);
+    requireImageFormat(document, operation, celData.image, celFormatFor(document, layer));
     return {
       document: {
         ...document,
@@ -388,7 +442,14 @@ function setCelData(
     fail(operation, `cel data ${operation.celDataId} doesn't exist`);
   }
   if (operation.image) {
-    requireImageFormat(document, operation, operation.image);
+    const user = Object.values(document.cels).find((cel) => cel.celDataId === celData.id);
+    const layer = user ? document.layers[user.layerId] : undefined;
+    requireImageFormat(
+      document,
+      operation,
+      operation.image,
+      layer && celFormatFor(document, layer),
+    );
   }
   const { x, y, opacity, image, provenance, userData } = operation;
   const next = withChanges(celData, { x, y, opacity, image, provenance, userData });
@@ -572,6 +633,146 @@ function setSliceProperties(
   };
 }
 
+// Tilesets
+
+function addTileset(
+  document: SpriteDocument,
+  operation: OperationOfType<"addTileset">,
+): OperationResult {
+  const { tileset, index } = operation;
+  if (document.tilesets.some((existing) => existing.id === tileset.id)) {
+    fail(operation, `tileset ${tileset.id} already exists`);
+  }
+  requireInsertIndex(operation, index, document.tilesets.length);
+  tileset.tiles.forEach((tile) => requireTileImage(document, operation, tileset, tile.image));
+  return {
+    document: { ...document, tilesets: insertAt(document.tilesets, index, tileset) },
+    inverse: [{ type: "removeTileset", tilesetId: tileset.id }],
+  };
+}
+
+function removeTileset(
+  document: SpriteDocument,
+  operation: OperationOfType<"removeTileset">,
+): OperationResult {
+  const index = requireIndexById(operation, document.tilesets, operation.tilesetId, "tileset");
+  if (
+    Object.values(document.layers).some(
+      (layer) => layer.kind === "tilemap" && layer.tilesetId === operation.tilesetId,
+    )
+  ) {
+    fail(operation, `tileset ${operation.tilesetId} is still used by a tilemap layer`);
+  }
+  return {
+    document: { ...document, tilesets: removeAt(document.tilesets, index) },
+    inverse: [{ type: "addTileset", tileset: document.tilesets[index]!, index }],
+  };
+}
+
+function setTilesetProperties(
+  document: SpriteDocument,
+  operation: OperationOfType<"setTilesetProperties">,
+): OperationResult {
+  const index = requireIndexById(operation, document.tilesets, operation.tilesetId, "tileset");
+  const tileset = document.tilesets[index]!;
+  const { name, baseIndex, userData } = operation;
+  return {
+    document: {
+      ...document,
+      tilesets: replaceAt(
+        document.tilesets,
+        index,
+        withChanges(tileset, { name, baseIndex, userData }),
+      ),
+    },
+    inverse: [
+      {
+        type: "setTilesetProperties",
+        tilesetId: tileset.id,
+        name: previousValue(name, tileset.name),
+        baseIndex: previousValue(baseIndex, tileset.baseIndex),
+        userData: previousOptionalValue(userData, tileset.userData),
+      },
+    ],
+  };
+}
+
+function appendTile(
+  document: SpriteDocument,
+  operation: OperationOfType<"appendTile">,
+): OperationResult {
+  const index = requireIndexById(operation, document.tilesets, operation.tilesetId, "tileset");
+  const tileset = document.tilesets[index]!;
+  requireTileImage(document, operation, tileset, operation.tile.image);
+  const next = { ...tileset, tiles: [...tileset.tiles, operation.tile] };
+  return {
+    document: { ...document, tilesets: replaceAt(document.tilesets, index, next) },
+    inverse: [{ type: "removeLastTile", tilesetId: tileset.id }],
+  };
+}
+
+function removeLastTile(
+  document: SpriteDocument,
+  operation: OperationOfType<"removeLastTile">,
+): OperationResult {
+  const index = requireIndexById(operation, document.tilesets, operation.tilesetId, "tileset");
+  const tileset = document.tilesets[index]!;
+  const lastIndex = tileset.tiles.length - 1;
+  if (lastIndex === 0) {
+    fail(operation, "tile 0 is the empty tile and can't be removed");
+  }
+  // Tiles still in use aren't refused here but by the invariants at the end of the transaction:
+  // tile references aren't checked as they're written, so a transaction may add a reference
+  // before the tile it needs, and its inverse then removes the tile before the reference.
+  const next = { ...tileset, tiles: tileset.tiles.slice(0, lastIndex) };
+  return {
+    document: { ...document, tilesets: replaceAt(document.tilesets, index, next) },
+    inverse: [{ type: "appendTile", tilesetId: tileset.id, tile: tileset.tiles[lastIndex]! }],
+  };
+}
+
+function setTile(document: SpriteDocument, operation: OperationOfType<"setTile">): OperationResult {
+  const index = requireIndexById(operation, document.tilesets, operation.tilesetId, "tileset");
+  const tileset = document.tilesets[index]!;
+  const { tileIndex, image, userData } = operation;
+  const tile = tileset.tiles[tileIndex];
+  if (!tile) {
+    fail(operation, `tileset ${tileset.id} has no tile ${tileIndex}`);
+  }
+  if (image) {
+    requireTileImage(document, operation, tileset, image);
+    // Tile 0 may only be refilled with transparency, e.g. after the transparent index changes.
+    if (
+      tileIndex === 0 &&
+      findContentBounds(
+        image.pixels,
+        image.format,
+        image.width,
+        image.height,
+        document.transparentIndex,
+      )
+    ) {
+      fail(operation, "tile 0 is the empty tile and can't be drawn on");
+    }
+  }
+  const next = {
+    ...tileset,
+    tiles: replaceAt(tileset.tiles, tileIndex, withChanges(tile, { image, userData })),
+  };
+  return {
+    document: { ...document, tilesets: replaceAt(document.tilesets, index, next) },
+    inverse: [
+      {
+        type: "setTile",
+        tilesetId: tileset.id,
+        tileIndex,
+        image: previousValue(image, tile.image),
+        userData: previousOptionalValue(userData, tile.userData),
+      },
+    ],
+  };
+}
+
 // Preconditions
 
 function fail(operation: { type: OperationType }, message: string): never {
@@ -623,6 +824,30 @@ function requireLayer(
   return layer;
 }
 
+function requireTileset(
+  document: SpriteDocument,
+  operation: { type: OperationType },
+  tilesetId: string,
+): Tileset {
+  return document.tilesets[requireIndexById(operation, document.tilesets, tilesetId, "tileset")]!;
+}
+
+/** Tile images are exactly the tileset's tile size, in the document's pixel format. */
+function requireTileImage(
+  document: SpriteDocument,
+  operation: { type: OperationType },
+  tileset: Tileset,
+  image: PixelImage,
+) {
+  if (image.width !== tileset.tileWidth || image.height !== tileset.tileHeight) {
+    fail(
+      operation,
+      `tiles in tileset ${tileset.id} must be ${tileset.tileWidth}×${tileset.tileHeight}`,
+    );
+  }
+  requireImageFormat(document, operation, image);
+}
+
 function requireChildIds(
   document: SpriteDocument,
   operation: { type: OperationType },
@@ -638,14 +863,24 @@ function requireChildIds(
   return parent.childIds;
 }
 
+/** Cel images are in the document's pixel format, except on tilemap layers, which use tile32. */
+function celFormatFor(document: SpriteDocument, layer: Layer): PixelFormat {
+  return layer.kind === "tilemap" ? "tile32" : pixelFormatForColorMode(document.colorMode);
+}
+
 function requireImageFormat(
   document: SpriteDocument,
   operation: { type: OperationType },
   image: PixelImage,
+  expectedFormat: PixelFormat = pixelFormatForColorMode(document.colorMode),
 ) {
-  const expectedFormat = pixelFormatForColorMode(document.colorMode);
   if (image.format !== expectedFormat) {
-    fail(operation, `image format ${image.format} doesn't match ${document.colorMode} color mode`);
+    fail(
+      operation,
+      expectedFormat === "tile32"
+        ? `tilemap cels hold tile32 images, not ${image.format}`
+        : `image format ${image.format} doesn't match ${document.colorMode} color mode`,
+    );
   }
   const expectedLength = pixelByteLength(image.format, image.width, image.height);
   if (image.pixels.length !== expectedLength) {

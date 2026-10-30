@@ -8,7 +8,13 @@ import type { SpriteDocument } from "../../schema";
 import { createDocument } from "../../create-document";
 import { FileFormatError } from "../../errors";
 import { createId } from "../../ids";
-import { packRgba } from "../../pixels";
+import {
+  packRgba,
+  readTile,
+  tileFlipDiagonal,
+  tileFlipHorizontal,
+  tileFlipVertical,
+} from "../../pixels";
 import { renderFrame } from "../../render-frame";
 import { canonicalDocument } from "../../test-support/canonical-document";
 import { editedDocumentArbitrary } from "../../test-support/random-documents";
@@ -30,6 +36,7 @@ const corpus = [
   "user-data",
   "sprite-settings",
   "grayscale",
+  "tilemap",
 ];
 
 function readCorpus(name: string) {
@@ -64,7 +71,7 @@ function maxChannelDifference(ours: Uint8Array, theirs: Uint8Array): number {
 describe("reading Aseprite's own files", () => {
   // Translucent compositing can differ from Aseprite by rounding, since Aseprite uses its own
   // integer arithmetic. Opaque and fully transparent pixels match exactly.
-  const translucent = new Set(["basics", "blend-modes", "groups"]);
+  const translucent = new Set(["basics", "blend-modes", "groups", "grayscale", "tilemap"]);
 
   test.each(corpus)("%s renders like Aseprite", (name) => {
     const { document } = readCorpus(name);
@@ -80,7 +87,7 @@ describe("reading Aseprite's own files", () => {
   test.each(corpus)("%s round-trips through kpixel without changes", (name) => {
     const first = readCorpus(name);
     const second = readAseprite(writeAseprite(first.document));
-    expect(second.warnings).toEqual(name === "grayscale" ? [] : first.warnings);
+    expect(second.warnings).toEqual(first.warnings);
     expect(canonicalDocument(second.document)).toStrictEqual(canonicalDocument(first.document));
   });
 
@@ -220,14 +227,47 @@ describe("reading Aseprite's own files", () => {
     ).toMatchObject({ reference: true });
   });
 
-  test("grayscale opens as RGBA, with a warning", () => {
+  test("grayscale stays grayscale", () => {
     const { document, warnings } = readCorpus("grayscale");
-    expect(document.colorMode).toBe("rgba");
-    expect(warnings).toEqual(["Grayscale sprites open as RGBA; the pixels look the same."]);
+    expect(warnings).toEqual([]);
+    expect(document.colorMode).toBe("grayscale");
+    expect(new Set(Object.values(document.celData).map((celData) => celData.image.format))).toEqual(
+      new Set(["graya8"]),
+    );
   });
 
-  test("tilemaps are rejected clearly", () => {
-    expect(() => readCorpus("tilemap")).toThrow(/tilemaps aren't supported yet/);
+  test("tilesets, tile user data and flipped tile references", () => {
+    const { document, warnings } = readCorpus("tilemap");
+    expect(warnings).toEqual([]);
+    const [tileset] = document.tilesets;
+    expect(tileset).toMatchObject({ name: "terrain", tileWidth: 3, tileHeight: 3, baseIndex: 1 });
+    expect(tileset!.tiles.map((tile) => tile.userData)).toEqual([
+      undefined,
+      { text: "grass" },
+      { color: packRgba(0, 0, 255, 255) },
+      { properties: { user: { solid: true } } },
+    ]);
+    const map = Object.values(document.layers).find((layer) => layer.name === "map");
+    expect(map).toMatchObject({ kind: "tilemap", tilesetId: tileset!.id });
+
+    const firstFrameCel = Object.values(document.cels).find(
+      (cel) => cel.layerId === map!.id && cel.frameId === document.frames[0]!.id,
+    )!;
+    const { image } = document.celData[firstFrameCel.celDataId]!;
+    expect(image).toMatchObject({ format: "tile32", width: 4, height: 3 });
+    const references = Array.from({ length: 8 }, (_, cell) => readTile(image.pixels, cell) >>> 0);
+    // Bitwise operators give signed numbers, so compare everything as unsigned.
+    const expected = [
+      0,
+      1 | tileFlipHorizontal,
+      2 | tileFlipVertical,
+      3 | tileFlipHorizontal | tileFlipVertical,
+      tileFlipDiagonal,
+      1 | tileFlipDiagonal | tileFlipHorizontal,
+      2 | tileFlipDiagonal | tileFlipVertical,
+      3 | tileFlipDiagonal | tileFlipHorizontal | tileFlipVertical,
+    ];
+    expect(references).toEqual(expected.map((reference) => reference >>> 0));
   });
 });
 
@@ -244,7 +284,7 @@ describe("files kpixel writes", () => {
   });
 
   test("the low-level file structure round-trips byte for byte", () => {
-    for (const name of [...corpus, "tilemap"]) {
+    for (const name of corpus) {
       const bytes = new Uint8Array(readFileSync(join(corpusDirectory, `${name}.aseprite`)));
       const structure = parseAsepriteFile(bytes);
       expect(parseAsepriteFile(serializeAsepriteFile(structure))).toEqual(structure);
@@ -270,6 +310,25 @@ describe("files kpixel writes", () => {
       origin: "generated",
       jobId: "job-1",
     });
+  });
+
+  test("a palette that shrinks in a later frame opens like Aseprite writes it", () => {
+    const base = createDocument({ width: 2, height: 2, colorMode: "indexed" });
+    const secondFrameId = createId();
+    const shrunk = { entries: [{ color: packRgba(9, 9, 9, 255) }] };
+    const document = applyOperations(base, [
+      { type: "addFrame", frame: { id: secondFrameId, durationMs: 100 }, index: 1 },
+      { type: "setFramePalette", frameId: secondFrameId, palette: shrunk },
+    ]).document;
+
+    // Aseprite keeps writing the old, longer range of entries after the palette shrinks.
+    const file = parseAsepriteFile(writeAseprite(document));
+    const chunk = file.frames[1]!.chunks.find((each) => each.type === "palette");
+    if (chunk?.type !== "palette") throw new Error("expected a palette chunk");
+    chunk.entries.push({ rgba: [1, 2, 3, 255] }, { rgba: [4, 5, 6, 255] });
+
+    const { document: reread } = readAseprite(serializeAsepriteFile(file));
+    expect(reread.paletteChanges.map((change) => change.palette)).toEqual([shrunk]);
   });
 
   test("values the format can't hold are refused", () => {
@@ -316,7 +375,7 @@ function documentWithOneCel(
 }
 
 describe("damaged files", () => {
-  const corpusFiles = [...corpus, "tilemap"].map(
+  const corpusFiles = corpus.map(
     (name) => new Uint8Array(readFileSync(join(corpusDirectory, `${name}.aseprite`))),
   );
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-**Last updated:** 2026-10-29 · **Current focus:** Phase 0 — Foundation
+**Last updated:** 2026-10-30 · **Current focus:** Phase 1 — Editor MVP
 
 This is a living plan for building kpixel, not a fixed commitment. Phases, milestones and their order will change as we learn; when they do, update this file and record the reason in the [changelog](changelog/). The reasoning behind the plan is in [product research](product-research.md), and the agent design is in [AI agent harness](ai-agent-harness.md).
 
@@ -16,8 +16,8 @@ This is a living plan for building kpixel, not a fixed commitment. Phases, miles
 | Phase                                                             | Goal                                        | Status      |
 | ----------------------------------------------------------------- | ------------------------------------------- | ----------- |
 | [Bootstrap](#bootstrap)                                           | A clean repo and toolchain to build on      | Done        |
-| [0. Foundation](#phase-0--foundation)                             | A document you can trust                    | In progress |
-| [1. Editor MVP](#phase-1--editor-mvp)                             | Finish a sprite without leaving the browser | Not started |
+| [0. Foundation](#phase-0--foundation)                             | A document you can trust                    | Done        |
+| [1. Editor MVP](#phase-1--editor-mvp)                             | Finish a sprite without leaving the browser | Next        |
 | [2. Pixel pipeline](#phase-2--pixel-pipeline)                     | Make any AI image or messy art game-ready   | Not started |
 | [3. AI generation](#phase-3--ai-generation)                       | Generation that lands as editable proposals | Not started |
 | [4. Agents and collaboration](#phase-4--agents-and-collaboration) | Humans and agents in the same document      | Not started |
@@ -33,9 +33,9 @@ TanStack Start on Cloudflare Workers, Tailwind and shadcn/ui, oxlint and oxfmt, 
 **Goal:** a document model, command log and file I/O solid enough that every later feature inherits their guarantees.
 
 - [x] **Test setup.** Vitest and fast-check for unit and property-based tests.
-- [x] **Document model.** Aseprite-shaped graph (sprite, layers, frames, cels, cel data, tags, slices, palette, user data) with a stable UUID on every entity, RGBA and indexed colour, and invariants enforced in code. See [document model](design/document-model.md).
+- [x] **Document model.** Aseprite-shaped graph (sprite, layers, frames, cels, cel data, tags, slices, palette, user data) with a stable UUID on every entity, RGBA, indexed and grayscale colour, and invariants enforced in code. See [document model](design/document-model.md).
 - [x] **Commands and transactions.** Serializable ops with schemas and exact inverses; a transaction envelope with label, actor and base version; undo and redo.
-- [ ] **Model completeness for `.aseprite`.** Tilesets and tilemap layers, grayscale colour mode, per-frame palettes.
+- [x] **Model completeness for `.aseprite`.** Tilesets and tilemap layers, grayscale colour mode, per-frame palettes.
 - [x] **Blob store.** Content-addressed pixel blobs (SHA-256 keys), region pixel patches, local cache in IndexedDB.
 - [x] **Native format.** `.kpixel` zip of a versioned JSON manifest plus blobs, with a [published schema](schemas/kpixel-file-v1.schema.json) and document migrations.
 - [x] **`.aseprite` codec.** Clean-room reader and writer from the public spec, preserving extension data and the Aseprite settings kpixel doesn't model yet.

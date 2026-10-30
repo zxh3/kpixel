@@ -1,14 +1,57 @@
-export type ColorMode = "rgba" | "indexed";
-export type PixelFormat = "rgba8" | "indexed8";
+export type ColorMode = "rgba" | "indexed" | "grayscale";
+export type PixelFormat = "rgba8" | "indexed8" | "graya8" | "tile32";
 
-/** RGBA images store 4 bytes per pixel (r, g, b, a); indexed images store 1 palette index. */
+/**
+ * Bytes per pixel: RGBA is r, g, b, a; indexed is one palette index; grayscale is grey then
+ * alpha; tile32 is one little-endian 32-bit tile reference per grid cell.
+ */
 export const bytesPerPixel: Record<PixelFormat, number> = {
   rgba8: 4,
   indexed8: 1,
+  graya8: 2,
+  tile32: 4,
 };
 
+/** The format of image cels in a document of each colour mode. */
 export function pixelFormatForColorMode(colorMode: ColorMode): PixelFormat {
-  return colorMode === "rgba" ? "rgba8" : "indexed8";
+  switch (colorMode) {
+    case "rgba":
+      return "rgba8";
+    case "indexed":
+      return "indexed8";
+    case "grayscale":
+      return "graya8";
+    default:
+      throw new Error(`Unknown colour mode: ${String(colorMode)}`);
+  }
+}
+
+// A tile reference (tile32) packs a tile index and flips into 32 bits, as Aseprite does.
+// Flips apply diagonal first (swapping x and y), then horizontal, then vertical.
+export const tileIndexMask = 0x1f_ff_ff_ff;
+export const tileFlipDiagonal = 0x20_00_00_00;
+export const tileFlipVertical = 0x40_00_00_00;
+export const tileFlipHorizontal = 0x80_00_00_00;
+
+/** Reads the tile reference at a cell of a tile32 image. */
+export function readTile(pixels: Uint8Array, cell: number): number {
+  const offset = cell * 4;
+  return (
+    (pixels[offset]! |
+      (pixels[offset + 1]! << 8) |
+      (pixels[offset + 2]! << 16) |
+      (pixels[offset + 3]! << 24)) >>>
+    0
+  );
+}
+
+/** Writes a tile reference into a cell of a tile32 image. */
+export function writeTile(pixels: Uint8Array, cell: number, tile: number): void {
+  const offset = cell * 4;
+  pixels[offset] = tile & 0xff;
+  pixels[offset + 1] = (tile >>> 8) & 0xff;
+  pixels[offset + 2] = (tile >>> 16) & 0xff;
+  pixels[offset + 3] = tile >>> 24;
 }
 
 export function pixelByteLength(format: PixelFormat, width: number, height: number): number {
@@ -64,8 +107,8 @@ export function pasteRegion(
 
 /**
  * The smallest rectangle holding every non-transparent pixel, or undefined if the image is
- * empty. RGBA pixels are transparent when alpha is 0; indexed pixels when they use the
- * transparent index.
+ * empty. RGBA and grayscale pixels are transparent when alpha is 0, indexed pixels when they use
+ * the transparent index, and tile cells when they hold the empty tile.
  */
 export function findContentBounds(
   pixels: Uint8Array,
@@ -74,10 +117,12 @@ export function findContentBounds(
   height: number,
   transparentIndex: number,
 ): PixelRect | undefined {
-  const isOpaque =
-    format === "rgba8"
-      ? (pixel: number) => pixels[pixel * 4 + 3] !== 0
-      : (pixel: number) => pixels[pixel] !== transparentIndex;
+  const isOpaque = {
+    rgba8: (pixel: number) => pixels[pixel * 4 + 3] !== 0,
+    indexed8: (pixel: number) => pixels[pixel] !== transparentIndex,
+    graya8: (pixel: number) => pixels[pixel * 2 + 1] !== 0,
+    tile32: (pixel: number) => (readTile(pixels, pixel) & tileIndexMask) !== 0,
+  }[format];
   let left = width;
   let top = height;
   let right = -1;

@@ -241,7 +241,7 @@ do
   save(sprite, "sprite-settings")
 end
 
--- 9. Grayscale, which kpixel opens as RGBA.
+-- 9. Grayscale: grey and alpha pixels, and a translucent layer over them.
 do
   local sprite = Sprite(5, 4, ColorMode.GRAYSCALE)
   local image = Image(5, 4, ColorMode.GRAYSCALE)
@@ -251,13 +251,48 @@ do
     end
   end
   sprite:newCel(sprite.layers[1], 1, image, Point(0, 0))
+  local top = sprite:newLayer()
+  top.name = "top"
+  local translucent = Image(3, 2, ColorMode.GRAYSCALE)
+  for y = 0, 1 do
+    for x = 0, 2 do
+      translucent:drawPixel(x, y, app.pixelColor.graya(x * 90 + y * 40, 64 + x * 60 + y * 30))
+    end
+  end
+  sprite:newCel(top, 1, translucent, Point(1, 1)).opacity = 128
   save(sprite, "grayscale")
 end
 
--- 10. A tilemap, which kpixel doesn't support yet and must reject clearly.
+-- 10. Tilemaps: a tileset with tile user data, a tilemap cel that uses every flip, and a second
+--     frame where the tilemap is moved partly off the canvas and drawn translucent.
 do
-  local sprite = Sprite(8, 8, ColorMode.RGB)
+  local flipX, flipY, flipDiagonal = 0x80000000, 0x40000000, 0x20000000
+  local sprite = Sprite(12, 9, ColorMode.RGB)
+  sprite:newFrame()
   app.activeSprite = sprite
-  app.command.NewLayer { tilemap = true, gridBounds = Rectangle(0, 0, 4, 4) }
+  local background = sprite.layers[1]
+  background.name = "background"
+  newImageCel(sprite, background, 1, 12, 9, 0, 0, 3, "holes")
+  app.command.NewLayer { tilemap = true, gridBounds = Rectangle(0, 0, 3, 3) }
+  local layer = app.activeLayer
+  layer.name = "map"
+  local tileset = layer.tileset
+  tileset.name = "terrain"
+  for seed = 1, 3 do
+    paint(sprite:newTile(tileset).image, seed * 5, seed == 3 and "holes" or nil)
+  end
+  tileset:tile(1).data = "grass"
+  tileset:tile(2).color = Color { r = 0, g = 0, b = 255, a = 255 }
+  tileset:tile(3).properties.solid = true
+  local flips = { 0, flipX, flipY, flipX | flipY, flipDiagonal, flipDiagonal | flipX, flipDiagonal | flipY, flipDiagonal | flipX | flipY }
+  local map = Image(4, 3, ColorMode.TILEMAP)
+  for y = 0, 2 do
+    for x = 0, 3 do
+      local cell = y * 4 + x
+      map:drawPixel(x, y, app.pixelColor.tile(cell % 4, flips[cell % #flips + 1]))
+    end
+  end
+  sprite:newCel(layer, 1, map, Point(0, 0))
+  sprite:newCel(layer, 2, map, Point(-3, 3)).opacity = 140
   save(sprite, "tilemap")
 end

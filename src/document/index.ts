@@ -20,7 +20,7 @@ export { documentMigrations, migrateStoredDocument, type DocumentMigration } fro
 export * from "./native-file";
 export * from "./operations";
 export * from "./pixels";
-export { indexedToRgba, renderFrame, type RenderFrameOptions } from "./render-frame";
+export { imageToRgba, paletteAt, renderFrame, type RenderFrameOptions } from "./render-frame";
 export * from "./schema";
 export { DocumentSession, type CommitInput } from "./session";
 export * from "./stored-document";
