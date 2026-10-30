@@ -31,6 +31,7 @@ The app runs at http://localhost:4200.
 | `pnpm deploy`     | Build and deploy with Wrangler                               |
 | `pnpm cf-typegen` | Regenerate `worker-configuration.d.ts` from `wrangler.jsonc` |
 | `pnpm check`      | Format check + lint + typecheck (what CI runs)               |
+| `pnpm test:e2e`   | Playwright end-to-end tests against the production build     |
 | `pnpm fmt`        | Format with oxfmt                                            |
 | `pnpm lint`       | Lint with oxlint                                             |
 | `pnpm typecheck`  | Typecheck with `tsc`                                         |

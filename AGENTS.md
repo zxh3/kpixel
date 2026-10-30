@@ -8,6 +8,11 @@ TanStack Start app on Cloudflare Workers. See README.md for the stack and layout
 - `pnpm fmt` / `pnpm lint:fix` — auto-fix formatting and lint issues.
 - `pnpm build` — production build; also regenerates `src/routeTree.gen.ts`.
 - `pnpm cf-typegen` — run after every `wrangler.jsonc` change.
+- `pnpm test:e2e` — Playwright end-to-end tests in `e2e/`, run against the production build.
+
+## Testing UI changes
+
+Verify every change that affects the UI in a real browser before calling it done, and add a Playwright spec for flows users rely on. Follow the `frontend-e2e-test` skill in [.claude/skills/frontend-e2e-test/SKILL.md](.claude/skills/frontend-e2e-test/SKILL.md), which also covers attaching screenshots to PRs.
 
 ## Conventions
 

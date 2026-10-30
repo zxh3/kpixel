@@ -29,3 +29,11 @@ jobs:
       - run: pnpm cf-typegen --check
       - run: pnpm check
       - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
