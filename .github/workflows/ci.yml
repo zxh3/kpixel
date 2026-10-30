@@ -1,9 +1,12 @@
 name: CI
 
+# Manual runs only while we're out of GitHub Actions budget.
+# To re-enable, restore:
+#   push:
+#     branches: [main]
+#   pull_request:
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
