@@ -40,7 +40,7 @@ TanStack Start on Cloudflare Workers, Tailwind and shadcn/ui, oxlint and oxfmt, 
 - [x] **Native format.** `.kpixel` zip of a versioned JSON manifest plus blobs, with a [published schema](schemas/kpixel-file-v1.schema.json) and document migrations.
 - [ ] **`.aseprite` codec.** Clean-room reader and writer from the public spec, preserving unknown chunks and extension data.
 - [ ] **Conformance corpus.** Real Aseprite files that must open, save and reopen losslessly; fuzzing for the codec.
-- [ ] **PNG import and export.**
+- [x] **PNG import and export.** Open any PNG (indexed ones keep their palette), export frames as PNG, and a frame compositor with all 19 blend modes.
 - [x] **Provenance fields.** Origin on every cel image and actor on every transaction, even before any AI exists.
 - [ ] **Server skeleton.** Custom server entry, a single-user `DocumentRoom` Durable Object that stores a versioned op log, R2 for blobs, and save and load through it.
 

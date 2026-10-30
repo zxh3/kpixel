@@ -3,7 +3,7 @@ import type { Operation, OperationOfType, OperationType } from "./operations";
 import type { GroupLayer, Layer, PixelImage, SpriteDocument } from "./schema";
 
 import { OperationError } from "./errors";
-import { bytesPerPixel, pixelByteLength, pixelFormatForColorMode } from "./pixels";
+import { copyRegion, pasteRegion, pixelByteLength, pixelFormatForColorMode } from "./pixels";
 
 export interface OperationResult {
   document: SpriteDocument;
@@ -428,8 +428,11 @@ function patchCelPixels(
   }
 
   const rect = { x, y, width, height };
-  const previousPixels = copyRegion(image, rect);
-  const nextImage = { ...image, pixels: withRegion(image, rect, pixels) };
+  const previousPixels = copyRegion(image.pixels, image.format, image.width, rect);
+  const nextImage = {
+    ...image,
+    pixels: pasteRegion(image.pixels, image.format, image.width, rect, pixels),
+  };
   const next = withChanges(celData, { image: nextImage, provenance });
   return {
     document: { ...document, celData: { ...document.celData, [celData.id]: next } },
@@ -711,39 +714,6 @@ function findCel(document: SpriteDocument, layerId: LayerId, frameId: FrameId) {
   return Object.values(document.cels).find(
     (cel) => cel.layerId === layerId && cel.frameId === frameId,
   );
-}
-
-// Pixel region helpers
-
-interface PixelRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-/** Copies a rectangle out of an image into a new row-major buffer. */
-function copyRegion(image: PixelImage, rect: PixelRect): Uint8Array {
-  const bytes = bytesPerPixel[image.format];
-  const rowLength = rect.width * bytes;
-  const region = new Uint8Array(rowLength * rect.height);
-  for (let row = 0; row < rect.height; row++) {
-    const start = ((rect.y + row) * image.width + rect.x) * bytes;
-    region.set(image.pixels.subarray(start, start + rowLength), row * rowLength);
-  }
-  return region;
-}
-
-/** Returns a copy of an image's pixels with a rectangle replaced. */
-function withRegion(image: PixelImage, rect: PixelRect, region: Uint8Array): Uint8Array {
-  const bytes = bytesPerPixel[image.format];
-  const rowLength = rect.width * bytes;
-  const pixels = image.pixels.slice();
-  for (let row = 0; row < rect.height; row++) {
-    const start = ((rect.y + row) * image.width + rect.x) * bytes;
-    pixels.set(region.subarray(row * rowLength, (row + 1) * rowLength), start);
-  }
-  return pixels;
 }
 
 // Immutable collection helpers

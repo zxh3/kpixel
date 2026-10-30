@@ -47,6 +47,18 @@ The native **`.kpixel` file** (`native-file.ts`) is a zip holding `manifest.json
 
 **Migrations** (`migrations.ts`) keep old files opening. Each change to the stored shape bumps `DOCUMENT_SCHEMA_VERSION` and adds a migration from the previous version that works on plain JSON, before validation. Shipped migrations never change.
 
+## Rendering and PNG
+
+**`renderFrame`** (`render-frame.ts`) flattens one frame into canvas-sized RGBA. Visible layers draw bottom to top with their blend mode and opacity times the cel's opacity; reference layers are left out unless asked for. Groups are flattened on their own and then blended in as one image. A cel's z-index moves it up or down its group's stack, with ties going to the higher z-index, as in Aseprite. Indexed documents render through the palette, with the transparent index clear. Fully transparent output pixels are always transparent black.
+
+Blend modes (`blend-modes.ts`) follow the [W3C Compositing and Blending spec](https://www.w3.org/TR/compositing-1/#blending), plus Aseprite's addition, subtract and divide. Results aren't guaranteed to match Aseprite byte for byte, since Aseprite uses its own integer arithmetic.
+
+**PNG** (`formats/png.ts`) uses [fast-png](https://github.com/image-js/fast-png) for decoding and plain encoding:
+
+- `decodePng` accepts every PNG flavour (1–16-bit, grey, RGB, palette, alpha, `tRNS`, interlaced) and normalises it to 8-bit RGBA or palette indexes. Images over 4096×4096 are refused before decoding.
+- `importPng` opens a PNG as a new document trimmed to its content, with provenance `imported`. Indexed PNGs become indexed documents with the same palette and indexes, adding a transparent entry if needed; a full 256-colour palette with no transparent entry opens as RGBA.
+- `exportFramePng` writes one frame, optionally upscaled. Indexed documents export as indexed PNGs whenever every flattened colour is in the palette, and as RGBA otherwise. fast-png doesn't write palette transparency, so the `tRNS` chunk is added separately.
+
 ## Invariants
 
 `invariants.ts` lists the structural rules the types can't express. They hold after every committed transaction:
@@ -67,6 +79,7 @@ Each cel data records where its pixels came from: `human`, `algorithmic`, `gener
 - **Property-based tests** (`document.property.test.ts`) generate long random sequences of transactions, many of them deliberately invalid, and check that every accepted transaction leaves a valid document, that rejected ones change nothing, that undo restores each previous document exactly and redo replays it, and that the JSON transaction log replays to the same document.
 - **File properties** (`native-file.test.ts`) check that randomly edited documents round-trip exactly through `.kpixel` files and blob stores, and unit tests cover damaged, foreign and newer files.
 - **Unit tests** cover each operation's preconditions and inverses, the session, the wire format and migrations.
+- **Rendering and PNG tests** check each blend mode's range, z-index and group behaviour, every PNG colour type and bit depth (with PNGs written by hand from the spec), and that exported PNGs decode to exactly the rendered pixels.
 
 `pnpm test` runs 100 random cases per property. To soak them, run `FAST_CHECK_NUM_RUNS=2000 pnpm test --testTimeout=0`.
 

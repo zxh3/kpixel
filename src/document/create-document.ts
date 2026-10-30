@@ -10,6 +10,8 @@ export interface CreateDocumentOptions {
   height: number;
   colorMode?: ColorMode;
   palette?: Palette;
+  /** The palette index treated as transparent in indexed mode. Defaults to 0. */
+  transparentIndex?: number;
 }
 
 /** Transparent, black and white. Index 0 is the transparent index in indexed mode. */
@@ -30,7 +32,7 @@ export function createDocument(options: CreateDocumentOptions): SpriteDocument {
     colorMode: options.colorMode ?? "rgba",
     width: options.width,
     height: options.height,
-    transparentIndex: 0,
+    transparentIndex: options.transparentIndex ?? 0,
     pixelRatio: { width: 1, height: 1 },
     frames: [{ id: createId(), durationMs: 100 }],
     layers: {
