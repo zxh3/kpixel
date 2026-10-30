@@ -5,7 +5,7 @@ export const Route = createFileRoute("/")({ component: Home });
 function Home() {
   return (
     <main className="flex min-h-svh items-center justify-center">
-      <h1 className="text-2xl font-semibold tracking-tight">ksprite</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">kpixel</h1>
     </main>
   );
 }
