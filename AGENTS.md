@@ -22,6 +22,15 @@ TanStack Start app on Cloudflare Workers. See README.md for the stack and layout
 - Never edit `src/routeTree.gen.ts` or `worker-configuration.d.ts` by hand.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `type(scope): summary`, e.g. `feat(auth): add login page`.
 
+## Changelog
+
+`docs/changelog/` records milestones and decisions; see its [README](docs/changelog/README.md) for the file naming and template.
+
+- Add an entry only for a milestone: a new feature or subsystem, a roadmap phase step, an architectural or product decision, or a change to the stack or infrastructure.
+- Skip bug fixes, refactors, dependency bumps, small UI tweaks and doc edits. Most commits get no entry.
+- Write the entry in the same commit as the work it describes. If one day's work extends an existing entry for the same milestone, update that entry instead of adding another.
+- Never rewrite past entries beyond typo fixes. When a decision is reversed, add a new entry that links to the old one.
+
 ## React
 
 Follow [You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect). Use `useEffect` only to synchronize with an external system (browser APIs, non-React widgets, subscriptions). If no external system is involved, you don't need an Effect.
