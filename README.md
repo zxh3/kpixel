@@ -18,7 +18,7 @@ pnpm install
 pnpm dev
 ```
 
-The app runs at http://localhost:3000.
+The app runs at http://localhost:4200.
 
 ## Scripts
 
