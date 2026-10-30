@@ -12,6 +12,7 @@ export {
   VersionConflictError,
   WireFormatError,
 } from "./errors";
+export * from "./formats/aseprite";
 export * from "./formats/png";
 export * from "./ids";
 export { assertValidDocument, findDocumentProblems } from "./invariants";

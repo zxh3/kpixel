@@ -165,7 +165,13 @@ export const TagSchema = Type.Object({
 
 export const SliceKeySchema = Type.Object({
   frameId: EntityIdSchema,
-  bounds: RectSchema,
+  /** A zero width or height hides the slice from this key's frame on, as in Aseprite. */
+  bounds: Type.Object({
+    x: Type.Integer(),
+    y: Type.Integer(),
+    width: Type.Integer({ minimum: 0 }),
+    height: Type.Integer({ minimum: 0 }),
+  }),
   /** The stretchable centre for 9-slice scaling, relative to bounds. */
   center: Type.Optional(RectSchema),
   /** The pivot point, relative to bounds. */

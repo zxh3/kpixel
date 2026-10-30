@@ -38,8 +38,8 @@ TanStack Start on Cloudflare Workers, Tailwind and shadcn/ui, oxlint and oxfmt, 
 - [ ] **Model completeness for `.aseprite`.** Tilesets and tilemap layers, grayscale colour mode, per-frame palettes.
 - [x] **Blob store.** Content-addressed pixel blobs (SHA-256 keys), region pixel patches, local cache in IndexedDB.
 - [x] **Native format.** `.kpixel` zip of a versioned JSON manifest plus blobs, with a [published schema](schemas/kpixel-file-v1.schema.json) and document migrations.
-- [ ] **`.aseprite` codec.** Clean-room reader and writer from the public spec, preserving unknown chunks and extension data.
-- [ ] **Conformance corpus.** Real Aseprite files that must open, save and reopen losslessly; fuzzing for the codec.
+- [x] **`.aseprite` codec.** Clean-room reader and writer from the public spec, preserving extension data and the Aseprite settings kpixel doesn't model yet.
+- [x] **Conformance corpus.** Files made by Aseprite that must open, save and reopen losslessly, checked against Aseprite itself; fuzzing for the codec.
 - [x] **PNG import and export.** Open any PNG (indexed ones keep their palette), export frames as PNG, and a frame compositor with all 19 blend modes.
 - [x] **Provenance fields.** Origin on every cel image and actor on every transaction, even before any AI exists.
 - [ ] **Server skeleton.** Custom server entry, a single-user `DocumentRoom` Durable Object that stores a versioned op log, R2 for blobs, and save and load through it.

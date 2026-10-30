@@ -703,11 +703,11 @@
                         },
                         "width": {
                           "type": "integer",
-                          "minimum": 1
+                          "minimum": 0
                         },
                         "height": {
                           "type": "integer",
-                          "minimum": 1
+                          "minimum": 0
                         }
                       }
                     },

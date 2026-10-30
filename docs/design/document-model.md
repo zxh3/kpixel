@@ -59,6 +59,34 @@ Blend modes (`blend-modes.ts`) follow the [W3C Compositing and Blending spec](ht
 - `importPng` opens a PNG as a new document trimmed to its content, with provenance `imported`. Indexed PNGs become indexed documents with the same palette and indexes, adding a transparent entry if needed; a full 256-colour palette with no transparent entry opens as RGBA.
 - `exportFramePng` writes one frame, optionally upscaled. Indexed documents export as indexed PNGs whenever every flattened colour is in the palette, and as RGBA otherwise. fast-png doesn't write palette transparency, so the `tRNS` chunk is added separately.
 
+## `.aseprite` files
+
+`formats/aseprite/` reads and writes Aseprite's format. It is **clean-room**: written only from the [published file spec](https://github.com/aseprite/aseprite/blob/main/docs/ase-file-specs.md), because Aseprite's source code is under a proprietary EULA. It has three layers:
+
+1. `binary.ts`: little-endian primitives. Every count read from a file is checked against the bytes left before anything is allocated.
+2. `file-structure.ts` and `properties.ts`: bytes to and from a typed structure of header, frames and chunks, including typed user-data properties. Compressed cels inflate through a stream that stops at their declared size, and a file's decoded pixels are capped at 512 MB.
+3. `read-aseprite.ts` and `write-aseprite.ts`: that structure to and from documents.
+
+`readAseprite` returns `{ document, warnings }`; nothing is dropped silently:
+
+- **Carried over exactly:** RGBA and indexed sprites, frames and durations, image and group layers with their settings, cels (raw, compressed and linked) with z-index, tags with colours, the palette with alpha and names, slices with 9-slice centres and pivots, and user data with typed properties on the sprite, layers, cels, tags and slices.
+- **Kept for export but not modelled yet:** the grid, colour profile, external files, a layer's lock-movement, background and prefer-linked flags, precise cel bounds, and whether groups are composited separately. They live under the `kpixel/aseprite` user-data namespace.
+- **Converted with a warning:** grayscale sprites open as RGBA; palette changes after the first frame use the first palette; deprecated and unknown chunks are ignored.
+- **Rejected:** tilemaps, until the model supports them.
+
+Typed properties stay natural JSON where that round-trips exactly (booleans, strings, 32-bit integers, non-integer doubles, arrays, objects). Other types are wrapped, e.g. `{ "$type": "int16", "value": 5 }`. Aseprite's user properties use the `user` namespace; extension properties use the extension's id.
+
+**Provenance survives Aseprite.** Each cel carries a `kpixel/provenance` extension property with a pixel checksum, which Aseprite keeps when it saves. If the pixels changed in the meantime, AI-generated content comes back as `generated-edited`, so AI involvement is never lost, and anything else becomes `imported`.
+
+**Known differences from Aseprite:**
+
+- Translucent compositing can differ by 1–2 levels out of 255, because Aseprite uses its own integer arithmetic.
+- Aseprite orders cels by z-index across the whole layer list; kpixel orders them within each group.
+- By default Aseprite draws groups pass-through and ignores their opacity and blend mode; kpixel always flattens groups first. Files keep Aseprite's setting, so Aseprite renders them as before.
+- When Aseprite saves a file, it drops group opacity and blend modes unless its "composite groups separately" preference is on, resets the unused transparent index of RGBA sprites, drops empty user-data text, and reorders slices.
+
+**Conformance.** `formats/aseprite/corpus/` holds sprites built by Aseprite itself from `make-corpus.lua`, with Aseprite's render of every frame; `make-corpus.sh` regenerates them. Tests check that each opens, renders like Aseprite, and round-trips unchanged, and fuzz the reader with corrupted files. Where Aseprite is installed, `aseprite-compatibility.test.ts` also has Aseprite describe and render kpixel's rewritten files (they must match the originals exactly) and re-save documents made in kpixel (they must read back unchanged, provenance included). It's skipped elsewhere, such as in CI.
+
 ## Invariants
 
 `invariants.ts` lists the structural rules the types can't express. They hold after every committed transaction:
@@ -87,9 +115,10 @@ Each cel data records where its pixels came from: `human`, `algorithmic`, `gener
 
 These are needed for lossless `.aseprite` round-trips and are tracked in the [roadmap](../roadmap.md):
 
-- tilesets and tilemap layers;
-- grayscale colour mode;
+- tilesets and tilemap layers (`.aseprite` files with tilemaps are rejected);
+- grayscale colour mode (grayscale `.aseprite` files open as RGBA);
 - per-frame palettes (the model has one palette per document);
+- the Aseprite settings kept under `kpixel/aseprite`, such as the grid and background layers;
 - a schema version stored with persisted transaction logs, so logs can be migrated alongside documents (with the server's op log).
 
 Blobs are whole images. Splitting large images into tiles, so an edit rewrites only the tiles it touches, can come later if canvases grow large enough to need it.

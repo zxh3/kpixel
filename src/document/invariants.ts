@@ -208,8 +208,8 @@ function checkSlices(
         report(`slice ${slice.id} has more than one key on frame ${key.frameId}`);
       }
       keyFrames.add(key.frameId);
-      checkInteger(report, `slice ${slice.id} width`, key.bounds.width, 1, Infinity);
-      checkInteger(report, `slice ${slice.id} height`, key.bounds.height, 1, Infinity);
+      checkInteger(report, `slice ${slice.id} width`, key.bounds.width, 0, Infinity);
+      checkInteger(report, `slice ${slice.id} height`, key.bounds.height, 0, Infinity);
     }
   }
 }
