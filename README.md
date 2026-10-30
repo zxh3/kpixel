@@ -31,6 +31,7 @@ The app runs at http://localhost:4200.
 | `pnpm deploy`     | Build and deploy with Wrangler                               |
 | `pnpm cf-typegen` | Regenerate `worker-configuration.d.ts` from `wrangler.jsonc` |
 | `pnpm check`      | Format check + lint + typecheck (what CI runs)               |
+| `pnpm test`       | Unit and property-based tests with Vitest and fast-check     |
 | `pnpm test:e2e`   | Playwright end-to-end tests against the production build     |
 | `pnpm fmt`        | Format with oxfmt                                            |
 | `pnpm lint`       | Lint with oxlint                                             |
@@ -41,6 +42,7 @@ The app runs at http://localhost:4200.
 ```
 src/
   components/ui/   shadcn/ui components (add with `pnpm dlx shadcn@latest add <name>`)
+  document/        document model, operations and transactions (pure TypeScript)
   lib/             shared utilities
   routes/          file-based routes (`__root.tsx` is the HTML shell)
   router.tsx       router factory
@@ -55,6 +57,7 @@ Generated files — `src/routeTree.gen.ts` and `worker-configuration.d.ts` — a
 - [Roadmap](docs/roadmap.md) — the living plan, phase by phase
 - [Product research](docs/product-research.md) — market, users and the product design behind the plan
 - [AI agent harness](docs/ai-agent-harness.md) — how the agent runs on Pi and Durable Objects
+- [Document model](docs/design/document-model.md) — the document, operations and transactions everything builds on
 - [Changelog](docs/changelog/) — milestones and decisions over time
 
 ## Cloudflare

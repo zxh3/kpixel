@@ -16,7 +16,7 @@ This is a living plan for building kpixel, not a fixed commitment. Phases, miles
 | Phase                                                             | Goal                                        | Status      |
 | ----------------------------------------------------------------- | ------------------------------------------- | ----------- |
 | [Bootstrap](#bootstrap)                                           | A clean repo and toolchain to build on      | Done        |
-| [0. Foundation](#phase-0--foundation)                             | A document you can trust                    | Next        |
+| [0. Foundation](#phase-0--foundation)                             | A document you can trust                    | In progress |
 | [1. Editor MVP](#phase-1--editor-mvp)                             | Finish a sprite without leaving the browser | Not started |
 | [2. Pixel pipeline](#phase-2--pixel-pipeline)                     | Make any AI image or messy art game-ready   | Not started |
 | [3. AI generation](#phase-3--ai-generation)                       | Generation that lands as editable proposals | Not started |
@@ -26,20 +26,22 @@ Status values: **Not started**, **Next**, **In progress**, **Done**. Milestones 
 
 ## Bootstrap
 
-TanStack Start on Cloudflare Workers, Tailwind and shadcn/ui, oxlint and oxfmt, CI, agent conventions, product research and the agent harness decision. See the changelog for [bootstrap](changelog/2026-10-29-bootstrap.md), [product research](changelog/2026-10-29-product-research.md) and [AI agent harness](changelog/2026-10-29-ai-agent-harness.md).
+TanStack Start on Cloudflare Workers, Tailwind and shadcn/ui, oxlint and oxfmt, CI, Playwright end-to-end tests, agent conventions, product research and the agent harness decision. See the changelog for [bootstrap](changelog/2026-10-29-bootstrap.md), [product research](changelog/2026-10-29-product-research.md), [AI agent harness](changelog/2026-10-29-ai-agent-harness.md) and [end-to-end testing](changelog/2026-10-29-e2e-testing.md).
 
 ## Phase 0 — Foundation
 
 **Goal:** a document model, command log and file I/O solid enough that every later feature inherits their guarantees.
 
-- [ ] **Document model.** Aseprite-shaped graph (sprite, layers, frames, cels, cel data, tags, slices, palettes, tilesets, user data) with a stable UUID on every entity, RGBA and indexed colour, and invariants enforced in code.
-- [ ] **Commands and transactions.** Serializable, versioned ops with schemas and inverses; a transaction envelope with label, actor and base version; undo and redo.
+- [x] **Test setup.** Vitest and fast-check for unit and property-based tests.
+- [x] **Document model.** Aseprite-shaped graph (sprite, layers, frames, cels, cel data, tags, slices, palette, user data) with a stable UUID on every entity, RGBA and indexed colour, and invariants enforced in code. See [document model](design/document-model.md).
+- [x] **Commands and transactions.** Serializable ops with schemas and exact inverses; a transaction envelope with label, actor and base version; undo and redo.
+- [ ] **Model completeness for `.aseprite`.** Tilesets and tilemap layers, grayscale colour mode, per-frame palettes.
 - [ ] **Blob store.** Content-addressed pixel blobs (hash keys), chunked pixel patches, local cache in IndexedDB or OPFS.
-- [ ] **Native format.** Versioned JSON manifest plus blobs, downloadable as a zip, with a published schema and migrations.
+- [ ] **Native format.** Versioned JSON manifest plus blobs, downloadable as a zip, with a published schema and migrations for documents and transaction logs.
 - [ ] **`.aseprite` codec.** Clean-room reader and writer from the public spec, preserving unknown chunks and extension data.
 - [ ] **Conformance corpus.** Real Aseprite files that must open, save and reopen losslessly; fuzzing for the codec.
 - [ ] **PNG import and export.**
-- [ ] **Provenance fields.** Origin on every cel image and actor on every transaction, even before any AI exists.
+- [x] **Provenance fields.** Origin on every cel image and actor on every transaction, even before any AI exists.
 - [ ] **Server skeleton.** Custom server entry, a single-user `DocumentRoom` Durable Object that stores the op log, and save and load through it.
 
 **Must make solid:** stable IDs, op versioning and migrations, property-based tests for invariants and undo.

@@ -46,5 +46,23 @@
       }
     ]
   },
-  "ignorePatterns": ["src/routeTree.gen.ts", "worker-configuration.d.ts"]
+  "ignorePatterns": ["src/routeTree.gen.ts", "worker-configuration.d.ts"],
+  "overrides": [
+    {
+      "files": ["src/document/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["react", "react-dom", "react/*", "@tanstack/*", "cloudflare:*", "@/*"],
+                "message": "src/document is pure TypeScript shared by the editor, Workers and tests; keep it free of UI, framework and Cloudflare imports."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

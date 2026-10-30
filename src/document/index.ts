@@ -1,0 +1,19 @@
+// The kpixel document model: pure TypeScript with no React or browser dependencies, so the same
+// code runs in the editor, in Workers and Durable Objects, and in tests.
+
+export { applyOperation, type OperationResult } from "./apply-operation";
+export { createDocument, type CreateDocumentOptions } from "./create-document";
+export {
+  DocumentInvariantError,
+  OperationError,
+  VersionConflictError,
+  WireFormatError,
+} from "./errors";
+export * from "./ids";
+export { assertValidDocument, findDocumentProblems } from "./invariants";
+export * from "./operations";
+export * from "./pixels";
+export * from "./schema";
+export { DocumentSession, type CommitInput } from "./session";
+export * from "./transaction";
+export * from "./wire-format";

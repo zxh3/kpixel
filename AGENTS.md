@@ -5,6 +5,7 @@ TanStack Start app on Cloudflare Workers. See README.md for the stack and layout
 ## Commands
 
 - `pnpm check` — format check, lint, typecheck. Run before finishing any change.
+- `pnpm test` — unit and property-based tests (Vitest, fast-check). Run before finishing any change to logic.
 - `pnpm fmt` / `pnpm lint:fix` — auto-fix formatting and lint issues.
 - `pnpm build` — production build; also regenerates `src/routeTree.gen.ts`.
 - `pnpm cf-typegen` — run after every `wrangler.jsonc` change.
@@ -13,6 +14,14 @@ TanStack Start app on Cloudflare Workers. See README.md for the stack and layout
 ## Testing UI changes
 
 Verify every change that affects the UI in a real browser before calling it done, and add a Playwright spec for flows users rely on. Follow the `frontend-e2e-test` skill in [.claude/skills/frontend-e2e-test/SKILL.md](.claude/skills/frontend-e2e-test/SKILL.md), which also covers attaching screenshots to PRs.
+
+## Document model
+
+`src/document/` is the foundation for everything else; read [docs/design/document-model.md](docs/design/document-model.md) before changing it.
+
+- Change documents only by applying operations in transactions, never by mutating them. Documents are immutable.
+- Keep `src/document/` free of React, framework and Cloudflare imports so it runs everywhere; oxlint enforces this.
+- A new operation needs a TypeBox schema, an exact inverse, invariant coverage, unit tests for its preconditions, and a case in `test-support/random-operations.ts` so the property tests exercise it.
 
 ## Conventions
 
