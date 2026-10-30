@@ -1,0 +1,13 @@
+// https://developers.cloudflare.com/workers/wrangler/configuration/
+// After changing bindings, run `pnpm cf-typegen` to regenerate worker-configuration.d.ts.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ksprite",
+  "main": "@tanstack/react-start/server-entry",
+  "compatibility_date": "2026-10-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+  },
+  "upload_source_maps": true,
+}
